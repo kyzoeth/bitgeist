@@ -1,26 +1,179 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  --background: #f4ecd8;
+  --foreground: #111111;
+}
+
+html,
+body {
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background-color: #f4ecd8;
+  color: #111111;
+}
+
+.retro-bg {
+  background-color: #f4ecd8;
+  background-image: radial-gradient(#dfd2b4 2px, transparent 2px);
+  background-size: 16px 16px;
+}
+
+.logo-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 37px;
+  border: 3.5px solid #111111;
+  box-shadow: 4px 4px 0px #111111;
+  font-weight: 900;
+  font-size: 19px;
+  color: #111111;
+}
+
+.retro-btn {
+  border: 3.5px solid #111111;
+  border-radius: 10px;
+  box-shadow: 4px 4px 0px #111111;
+  font-weight: 900;
+  transition: transform 0.05s ease, box-shadow 0.05s ease;
+  cursor: pointer;
+}
+
+.retro-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0px #111111;
+}
+
+.retro-btn:active {
+  transform: translate(3px, 3px);
+  box-shadow: 1px 1px 0px #111111;
+}
+
+/* Wide Charcoal CRT TV Double Coral + Gold Outer Casing */
+.crt-outer-coral {
+  background: #ec6553;
+  border: 4px solid #111111;
+  border-radius: 24px;
+  padding: 6px;
+  box-shadow: 4px 6px 0px #111111;
+}
+
+.crt-outer-gold {
+  background: #f5c342;
+  border: 3px solid #111111;
+  border-radius: 18px;
+  padding: 5px;
+}
+
+.crt-charcoal-bezel {
+  background: linear-gradient(180deg, #2d2c33 0%, #201f25 100%);
+  border: 4px solid #111111;
+  border-radius: 14px;
+  padding: 8px 12px;
+  position: relative;
+  box-shadow: inset 0 6px 16px rgba(0, 0, 0, 0.65);
+}
+
+.crt-curved-glass {
+  border: 4px solid #111111;
+  border-radius: 22px / 18px;
+  overflow: hidden;
+  position: relative;
+  background: #1a191f;
+  box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.35);
+}
+
+.crt-glass-sheen {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.02) 24%, transparent 38%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.055) 0px,
+      rgba(0, 0, 0, 0.055) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes countdown-beat-pop {
+  0% {
+    transform: scale(1.48);
+    opacity: 0.15;
+  }
+  38% {
+    transform: scale(0.95);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes countdown-go-burst {
+  0% {
+    transform: scale(0.78);
+    opacity: 0.96;
+  }
+  28% {
+    transform: scale(1.08);
+    opacity: 0.96;
+  }
+  100% {
+    transform: scale(1.24);
+    opacity: 0;
+  }
+}
+
+.countdown-beat-pop {
+  animation: countdown-beat-pop 320ms cubic-bezier(0.2, 0.9, 0.3, 1.08) forwards;
+}
+
+.countdown-go-burst {
+  animation: countdown-go-burst 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modal-backdrop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-card-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-backdrop-fade {
+  animation: modal-backdrop-fade 120ms ease-out forwards;
+}
+
+.modal-card-pop {
+  animation: modal-card-pop 150ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }

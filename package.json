@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --experimental-strip-types --test tests/bitgeist.test.mjs"
   },
   "dependencies": {
     "next": "16.4.3",
+    "nostalgist": "^0.23.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

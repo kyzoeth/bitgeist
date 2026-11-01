@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# runtime ghost store, local HMAC secret & atomic write temp files
+/data/.bitgeist_identity_secret
+/data/ghosts.json
+/data/*.sqlite*
+/data/*.tmp
