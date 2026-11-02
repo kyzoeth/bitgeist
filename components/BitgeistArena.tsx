@@ -2514,12 +2514,6 @@ export default function BitgeistArena({
     [fetchGhostsForProfile, getCurrentLiveInputMask, syncEffectiveVirtualButtons]
   );
 
-  const handleManualSyncStart = useCallback(() => {
-    userAudioUnlockedRef.current = true;
-    setShowHowItWorks(false);
-    void lockPregameStartingLine(true);
-  }, [lockPregameStartingLine]);
-
   // Initial client bootstrap: restore saved Arcade Tag & SFX preference, load IndexedDB Vault, and auto-boot Dare or Daily Sprint
   useEffect(() => {
     let cancelled = false;
@@ -3673,10 +3667,9 @@ export default function BitgeistArena({
             getCurrentLiveInputMask()
           );
           st.inGameplay = false;
-          // Auto-lock only for known exact-RAM profiles where RAM state deterministically distinguishes
-          // controllable stage gameplay from title/menu/overworld screens. Universal OAM/WRAM cartridges
-          // stay in live responsive pregame until the runner clicks SYNC NOW or + NEW SEGMENT.
-          if (curProf.profileKind === 'exact-ram' && t.inGameplay) {
+          // Auto-lock 00.00s for all ROM profiles (both exact-RAM and universal OAM causal sprite detection)
+          // the moment controllable stage gameplay is active for 4 consecutive frames.
+          if (t.inGameplay) {
             pregameReadyFramesRef.current++;
             if (pregameReadyFramesRef.current >= 4) {
               pregameReadyFramesRef.current = 0;
@@ -3698,6 +3691,7 @@ export default function BitgeistArena({
       ) {
         const profile = profileRef.current;
         const prevTracker = trackerRef.current;
+        const prevMissingSprites = prevTracker.missingSpriteFrames ?? 0;
         const isMarkingCustomSegment = segmentCreatorStepRef.current !== 'idle';
         const rawCoreF = emulatedCoreFrameRef.current;
         const coreDelta = Math.max(0, rawCoreF - lastObservedCoreFrameRef.current);
@@ -3718,6 +3712,37 @@ export default function BitgeistArena({
         const t = hasTelemetrySource
           ? profile.extractTelemetry(ram ?? EMPTY_RAM_VIEW, prevTracker, liveMaskForTelemetry)
           : null;
+
+        // Multi-Menu Auto Re-Anchor: If a universal OAM ROM transitions across a blank loading screen
+        // (e.g. Character/Stage Select -> Stage 1) early in the run, re-anchor 00.00s to the newly loaded stage!
+        if (
+          t &&
+          profile.profileKind === 'universal-oam' &&
+          !hasExplicitBoundsRef.current &&
+          !isMarkingCustomSegment &&
+          !st.isReplayingInputs &&
+          prevMissingSprites >= 3 &&
+          (prevTracker.missingSpriteFrames ?? 0) === 0 &&
+          raceElapsedMsRef.current < 15_000 &&
+          t.playerWorldX < profile.startWorldX + 120
+        ) {
+          prevTracker.cameraX = 0;
+          raceElapsedMsRef.current = 0;
+          emulatedCoreFrameRef.current = 0;
+          pausedCoreFramesRef.current = 0;
+          lastObservedCoreFrameRef.current = 0;
+          st.raceFrame = 0;
+          setTimerText('00.00s');
+          recordedFramesRef.current = [[0, t.playerWorldX, t.playerWorldY]];
+          lastRecordedFrameRef.current = 0;
+          inputRecorderRef.current.reset();
+          void instance
+            .saveState()
+            .then(({ state }) => {
+              checkpointBlobRef.current = state;
+            })
+            .catch(() => {});
+        }
 
         const pauseForMidRunCutscene =
           t !== null &&
@@ -5811,7 +5836,6 @@ export default function BitgeistArena({
                         gamepadConnected={gamepadConnected}
                         countdownStep={countdownDisplay}
                         onStartRace={startOrTakeoverLiveRace}
-                        onManualSyncStart={handleManualSyncStart}
                       />
 
                       <button

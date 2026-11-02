@@ -56,7 +56,6 @@ interface SprintBottomBannerTrackProps {
   gamepadConnected?: boolean;
   countdownStep?: '3' | '2' | '1' | 'GO!' | null;
   onStartRace?: () => void;
-  onManualSyncStart?: () => void;
 }
 
 export function SprintBottomBannerTrack({
@@ -65,13 +64,12 @@ export function SprintBottomBannerTrack({
   gamepadConnected = false,
   countdownStep = null,
   onStartRace,
-  onManualSyncStart,
 }: SprintBottomBannerTrackProps) {
   if (raceStatus === 'pregame') {
     return (
       <div
         aria-label="Pre-Game Story and Menu Sync Bar"
-        className="h-[24px] flex-1 min-w-0 bg-[#17161D] text-[#FFE74C] border border-[#7FD1AE]/75 rounded pl-2 pr-1 flex items-center justify-between gap-1.5 font-black text-[10px] uppercase tracking-tight whitespace-nowrap overflow-hidden"
+        className="h-[24px] flex-1 min-w-0 bg-[#17161D] text-[#FFE74C] border border-[#7FD1AE]/75 rounded px-2.5 flex items-center justify-center gap-1.5 font-black text-[10px] uppercase tracking-tight whitespace-nowrap overflow-hidden"
       >
         <span className="truncate flex items-center gap-1.5 min-w-0">
           <span
@@ -79,19 +77,9 @@ export function SprintBottomBannerTrack({
             className="w-2 h-2 rounded-full bg-[#7FD1AE] shadow-[0_0_5px_#7FD1AE] animate-pulse shrink-0"
           />
           <span className="truncate">
-            <span className="hidden sm:inline">INTRO / STORY • </span>ENTER STAGE TO AUTO-SYNC 00.00s
+            <span className="hidden sm:inline">INTRO / MENU • </span>ENTER STAGE TO AUTO-SYNC 00.00s
           </span>
         </span>
-        {onManualSyncStart && (
-          <button
-            type="button"
-            onClick={onManualSyncStart}
-            title="Lock 00.00s starting line right at this frame"
-            className="h-[18px] px-1.5 rounded bg-[#7FD1AE] hover:bg-[#FFE74C] text-[#111111] border border-[#111111] text-[9.5px] font-black uppercase leading-none cursor-pointer transition-colors shrink-0"
-          >
-            SYNC NOW
-          </button>
-        )}
       </div>
     );
   }

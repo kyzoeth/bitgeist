@@ -11,7 +11,6 @@ import {
 import {
   NES_INPUT_A,
   NES_INPUT_B,
-  NES_INPUT_DOWN,
   NES_INPUT_LEFT,
   NES_INPUT_RIGHT,
   NES_INPUT_SELECT,
@@ -1063,22 +1062,19 @@ function createUniversalNesProfile(romId: string, rawName: string): RomProfile {
       const tileChanged = prev.oamTile !== -1 && spriteTile !== prev.oamTile;
       const holdingRight = (liveInputMask & NES_INPUT_RIGHT) !== 0;
       const holdingLeft = (liveInputMask & NES_INPUT_LEFT) !== 0;
-      const holdingClimbOrJump =
-        (liveInputMask & NES_INPUT_UP) !== 0 || (liveInputMask & NES_INPUT_A) !== 0;
+      const holdingJump = (liveInputMask & NES_INPUT_A) !== 0;
+      const holdingClimbOrJump = (liveInputMask & NES_INPUT_UP) !== 0 || holdingJump;
 
       let inGameplay = prev.hadGameplay || Boolean(prev.manualSyncUnlocked);
       if (!inGameplay) {
+        prev.preGameFrames = (prev.preGameFrames ?? 0) + 1;
+        if ((liveInputMask & NES_INPUT_START) !== 0) {
+          prev.startPressedInPregame = true;
+        }
         const startOrSelect =
           (liveInputMask & (NES_INPUT_START | NES_INPUT_SELECT)) !== 0;
         const controlHeld =
-          (liveInputMask &
-            (NES_INPUT_LEFT |
-              NES_INPUT_RIGHT |
-              NES_INPUT_UP |
-              NES_INPUT_DOWN |
-              NES_INPUT_A |
-              NES_INPUT_B)) !==
-          0;
+          (liveInputMask & (NES_INPUT_LEFT | NES_INPUT_RIGHT | NES_INPUT_A | NES_INPUT_B)) !== 0;
 
         if (startOrSelect) {
           prev.causalMoveFrames = 0;
@@ -1092,13 +1088,13 @@ function createUniversalNesProfile(romId: string, rawName: string): RomProfile {
             holdingRight &&
             !holdingLeft &&
             ((rawDx > 0 && rawDx <= 8) ||
-              (rawDx === 0 && tileChanged && spriteX >= 72 && spriteX <= 200));
+              (rawDx === 0 && tileChanged && spriteX >= 104 && spriteX <= 168 && spriteY >= 144));
           const causalLeft =
             holdingLeft &&
             !holdingRight &&
             ((rawDx < 0 && rawDx >= -8) ||
-              (rawDx === 0 && tileChanged && spriteX >= 40 && spriteX <= 184));
-          const causalVert = holdingClimbOrJump && rawDy < -1 && rawDy >= -14;
+              (rawDx === 0 && tileChanged && spriteX >= 72 && spriteX <= 152 && spriteY >= 144));
+          const causalVert = holdingJump && rawDy < -1 && rawDy >= -14;
 
           if (causalRight || causalLeft || causalVert) {
             prev.causalMoveFrames = (prev.causalMoveFrames ?? 0) + 1;
