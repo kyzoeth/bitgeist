@@ -167,6 +167,7 @@ export interface TelemetryTrackerState {
   startPressedInPregame?: boolean;
   wramSample?: Uint8Array;
   wramStableFrames?: number;
+  ramScanner?: import('./ramAutoScanner').CausalRamScannerState;
 }
 
 export function createInitialTrackerState(): TelemetryTrackerState {

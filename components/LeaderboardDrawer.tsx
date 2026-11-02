@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { sanitizeArcadeTag } from '@/lib/ghostShare';
 import { ArcadeIdentityInfo, GhostRun, MountainStandingEntry } from '@/lib/types';
 
-export type RivalSelectionMode = 'top' | 'pb' | 'custom';
+export type RivalSelectionMode = 'top' | 'pb' | 'custom' | 'apex';
 
 interface LeaderboardDrawerProps {
   stageLabel: string;
@@ -25,6 +25,7 @@ interface LeaderboardDrawerProps {
   onToggleSwarm?: () => void;
   onSelectTopRecord: () => void;
   onSelectMyPb: () => void;
+  onSelectApexTas?: () => void;
   onSelectCustomRival: (ghost: GhostRun) => void;
   onWatchGhostReplay?: (ghost: GhostRun) => void;
   onRestoreClaimKey?: (claimKey: string) => Promise<{ ok: boolean; error?: string }>;
@@ -48,6 +49,7 @@ export default function LeaderboardDrawer({
   onToggleSwarm,
   onSelectTopRecord,
   onSelectMyPb,
+  onSelectApexTas,
   onSelectCustomRival,
   onWatchGhostReplay,
   onRestoreClaimKey,
@@ -102,6 +104,23 @@ export default function LeaderboardDrawer({
 
   const renderHeaderControls = () => (
     <div className="flex items-center gap-1 shrink-0">
+      {onSelectApexTas && (
+        <button
+          type="button"
+          onClick={onSelectApexTas}
+          aria-pressed={rivalMode === 'apex'}
+          aria-label="Toggle Crowd-Synthesized APEX TAS Ghost"
+          title="Stage 18 APEX TAS Pacemaker: Race the crowd-spliced Sum-of-Bests composite ghost"
+          className={`px-1.5 h-[22px] rounded-[5px] border-[1.5px] border-[#111111] font-black text-[8.5px] uppercase leading-none flex items-center justify-center cursor-pointer select-none transition-all duration-75 ${
+            rivalMode === 'apex'
+              ? 'bg-[#00F5D4] text-[#111111] shadow-[1.5px_1.5px_0_#111111]'
+              : 'bg-[#FFFDF7] hover:bg-[#00F5D4] text-[#111111]/90 shadow-[0_1.5px_0_#111111] active:translate-y-[1px] active:shadow-none'
+          }`}
+        >
+          APEX
+        </button>
+      )}
+
       {onToggleSwarm && (
         <button
           type="button"

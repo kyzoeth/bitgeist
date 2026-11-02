@@ -67,12 +67,20 @@ import {
   playDeathResetSfx,
   playGoalFanfareSfx,
   playLevelStepSfx,
+  playPsychoacousticPaceCue,
   playRaceStartSfx,
   playScreenWipeSfx,
   playSplitCheckpointSfx,
   setMusicMuted,
   setSfxMuted,
 } from '@/lib/retroAudio';
+import {
+  analyzeRunMistakeVsRival,
+  computeKdeHazardZones,
+  detectFramePerfectInputBeat,
+  MistakeInflectionAnalysis,
+  synthesizeApexTasGhost,
+} from '@/lib/speedrunIntelligence';
 import {
   applyCustomSprintBounds,
   CELESTE_ROM_ID,
@@ -654,6 +662,17 @@ export default function BitgeistArena({
   const [practicePin, setPracticePin] = useState<PracticePinState | null>(null);
   const practicePinBlobRef = useRef<Blob | null>(null);
 
+  // Stages 17–20: Speedrun Intelligence (DTW Trajectory Coach, KDE Hazard Zones, 1F Rhythm, Pace Sonification)
+  const [mistakeCoach, setMistakeCoach] = useState<MistakeInflectionAnalysis | null>(null);
+  const mistakeCoachRef = useRef<MistakeInflectionAnalysis | null>(null);
+  const deathCoordsBySprintRef = useRef<Record<string, [number, number][]>>({});
+  const lastPaceCheckpointTierRef = useRef<number>(0);
+  const lastFramePerfectFrameRef = useRef<number>(-99);
+  const prevInputMaskForRhythmRef = useRef<number>(0);
+  const prevStepYForRhythmRef = useRef<number>(180);
+  const clearedHazardZonesRef = useRef<Set<number>>(new Set());
+  const leaderboardRunsRef = useRef<GhostRun[]>([]);
+
   // Victory Modal State
   const [isVictoryOpen, setIsVictoryOpen] = useState<boolean>(false);
   const [finishStats, setFinishStats] = useState<{
@@ -737,6 +756,14 @@ export default function BitgeistArena({
   useEffect(() => {
     replaySpeedRef.current = replaySpeed;
   }, [replaySpeed]);
+
+  useEffect(() => {
+    mistakeCoachRef.current = mistakeCoach;
+  }, [mistakeCoach]);
+
+  useEffect(() => {
+    leaderboardRunsRef.current = leaderboardRuns;
+  }, [leaderboardRuns]);
 
   const helpButtonRef = useRef<HTMLButtonElement | null>(null);
   const helpPanelRef = useRef<HTMLElement | null>(null);
@@ -1303,6 +1330,26 @@ export default function BitgeistArena({
     [handleSelectTopRecord]
   );
 
+  // Stage 18: Select Crowd-Synthesized "APEX•TAS" Composite Pacemaker Ghost
+  const handleSelectApexTas = useCallback(() => {
+    setSwarmEnabled(false);
+    if (rivalModeRef.current === 'apex') {
+      handleSelectTopRecord();
+      return;
+    }
+    const curProf = profileRef.current;
+    const apex = synthesizeApexTasGhost(
+      leaderboardRunsRef.current,
+      curProf.startWorldX,
+      curProf.goalWorldX
+    );
+    if (!apex) return;
+    rivalModeRef.current = 'apex';
+    setRivalMode('apex');
+    targetGhostRef.current = apex;
+    setTargetGhost(apex);
+  }, [handleSelectTopRecord]);
+
   const getEffectiveDareSlugForProfile = useCallback(
     (profile: RomProfile): string | undefined => {
       if (!dareSlug) return undefined;
@@ -1375,11 +1422,18 @@ export default function BitgeistArena({
         }
 
         if (Array.isArray(data.leaderboard)) {
+          leaderboardRunsRef.current = data.leaderboard;
           setLeaderboardRuns(data.leaderboard);
         }
         if (typeof data.totalRuns === 'number') {
           setLeaderboardTotalRuns(data.totalRuns);
         }
+
+        liveStateRef.current.hazardZones = computeKdeHazardZones(
+          deathCoordsBySprintRef.current[profile.sprintId] || [],
+          profile.startWorldX,
+          profile.goalWorldX
+        );
 
         serverTopGhostRef.current = nextTop;
         setServerTopGhost(nextTop);
@@ -1397,6 +1451,22 @@ export default function BitgeistArena({
         let activeTarget = nextTop;
         if (!effectiveDareSlug && rivalModeRef.current === 'pb' && pbGhost) {
           activeTarget = pbGhost;
+        } else if (
+          !effectiveDareSlug &&
+          rivalModeRef.current === 'apex' &&
+          Array.isArray(data.leaderboard)
+        ) {
+          const apex = synthesizeApexTasGhost(
+            data.leaderboard,
+            profile.startWorldX,
+            profile.goalWorldX
+          );
+          if (apex) {
+            activeTarget = apex;
+          } else {
+            rivalModeRef.current = 'top';
+            setRivalMode('top');
+          }
         } else if (
           !effectiveDareSlug &&
           rivalModeRef.current === 'custom' &&
@@ -1648,7 +1718,18 @@ export default function BitgeistArena({
       if (prevProfile.sprintId !== profile.sprintId) {
         practicePinBlobRef.current = null;
         setPracticePin(null);
+        mistakeCoachRef.current = null;
+        setMistakeCoach(null);
+        liveStateRef.current.coachArc = null;
       }
+      liveStateRef.current.hazardZones = computeKdeHazardZones(
+        deathCoordsBySprintRef.current[profile.sprintId] || [],
+        profile.startWorldX,
+        profile.goalWorldX
+      );
+      lastPaceCheckpointTierRef.current = 0;
+      lastFramePerfectFrameRef.current = -99;
+      clearedHazardZonesRef.current.clear();
       if (prevProfile.sprintId !== profile.sprintId && !effectiveDareSlug) {
         targetGhostRef.current = null;
         setTargetGhost(null);
@@ -2772,6 +2853,14 @@ export default function BitgeistArena({
           inputRecorderRef.current.reset();
           overtakenGhostIdsRef.current.clear();
           lastSplitRoomIdRef.current = null;
+          lastPaceCheckpointTierRef.current = 0;
+          lastFramePerfectFrameRef.current = -99;
+          clearedHazardZonesRef.current.clear();
+          liveStateRef.current.hazardZones = computeKdeHazardZones(
+            deathCoordsBySprintRef.current[profileRef.current.sprintId] || [],
+            profileRef.current.startWorldX,
+            profileRef.current.goalWorldX
+          );
           liveStateRef.current.popups.length = 0;
           liveStateRef.current.raceFrame = 0;
           heldReplayButtonsRef.current.clear();
@@ -3324,6 +3413,20 @@ export default function BitgeistArena({
       // non-fatal
     }
   }, [practicePin, syncEffectiveVirtualButtons]);
+
+  // Stage 17: 1-Click "Fix This Mistake" Counterfactual Savestate Coach ([I])
+  const handlePracticeMistakeCoach = useCallback(() => {
+    const coach = mistakeCoachRef.current;
+    if (!coach) return;
+    userAudioUnlockedRef.current = true;
+    liveStateRef.current.coachArc = coach.optimalArc;
+    setIsVictoryOpen(false);
+    if (practicePinBlobRef.current && practicePin) {
+      void handleWarpPracticePin();
+    } else {
+      void resetToStartingLine(false, { startCountdown: true, preserveHeldInputs: true });
+    }
+  }, [handleWarpPracticePin, practicePin, resetToStartingLine]);
 
   useEffect(() => {
     if (!partyLobby) return;
@@ -3944,11 +4047,117 @@ export default function BitgeistArena({
                 }
               }
             }
+
+            // Stage 19: 1-Frame Input-Rhythm Analyzer & KDE Hazard-Zone Survival Callouts
+            // Stage 20: Psychoacoustic Pace-Sonification (25%, 50%, 75% course progress)
+            if (!st.isReplayingInputs && !isMarkingCustomSegment) {
+              const dxFrame = t.playerWorldX - prevX;
+              const dyFrame = t.playerWorldY - prevStepYForRhythmRef.current;
+              prevStepYForRhythmRef.current = t.playerWorldY;
+              const beatLabel =
+                intFrame - lastFramePerfectFrameRef.current >= 45
+                  ? detectFramePerfectInputBeat(
+                      prevInputMaskForRhythmRef.current,
+                      liveMaskForTelemetry,
+                      dxFrame,
+                      dyFrame
+                    )
+                  : null;
+              prevInputMaskForRhythmRef.current = liveMaskForTelemetry;
+              if (beatLabel) {
+                lastFramePerfectFrameRef.current = intFrame;
+                st.popups.push({
+                  id: ++popupSeqRef.current,
+                  worldX: t.playerWorldX + 6,
+                  worldY: Math.max(28, t.playerWorldY - 12),
+                  text: beatLabel,
+                  bg: '#00F5D4',
+                  textColor: '#111111',
+                  ttlMs: 820,
+                  maxTtlMs: 820,
+                });
+              }
+
+              const hzList = st.hazardZones;
+              if (hzList && hzList.length > 0 && t.playerWorldX > prevX) {
+                for (let hi = 0; hi < hzList.length; hi++) {
+                  if (clearedHazardZonesRef.current.has(hi)) continue;
+                  const hz = hzList[hi];
+                  const passX = hz.worldX + 12;
+                  if (prevX < passX && t.playerWorldX >= passX) {
+                    clearedHazardZonesRef.current.add(hi);
+                    st.popups.push({
+                      id: ++popupSeqRef.current,
+                      worldX: t.playerWorldX + 8,
+                      worldY: Math.max(30, t.playerWorldY - 14),
+                      text: `🔥 CLEARED ${hz.wipePercent}% WIPE ZONE!`,
+                      bg: '#FFE74C',
+                      textColor: '#111111',
+                      ttlMs: 880,
+                      maxTtlMs: 880,
+                    });
+                  }
+                }
+              }
+
+              const courseSpan = Math.max(1, profile.goalWorldX - profile.startWorldX);
+              const courseProg = (t.playerWorldX - profile.startWorldX) / courseSpan;
+              const tier =
+                courseProg >= 0.75 ? 3 : courseProg >= 0.5 ? 2 : courseProg >= 0.25 ? 1 : 0;
+              if (tier > lastPaceCheckpointTierRef.current && intFrame > 18) {
+                lastPaceCheckpointTierRef.current = tier;
+                const rival = targetGhostRef.current;
+                if (
+                  rival &&
+                  rival.frames.length >= 2 &&
+                  interpolateGhostPosInto(
+                    rival.frames,
+                    st.raceFrame,
+                    rival.diedAtFrame,
+                    scratchGhostPos
+                  )
+                ) {
+                  const splitSec = computeGhostSplitDeltaSec(
+                    rival.frames,
+                    st.raceFrame,
+                    t.playerWorldX,
+                    scratchGhostPos.x
+                  );
+                  playPsychoacousticPaceCue(
+                    splitSec <= -0.15 ? 'gold' : splitSec <= 0.05 ? 'mint' : 'coral'
+                  );
+                }
+              }
+            }
           }
 
           // Deliberate 4-Phase Death Respawn Sequence (suppressed while freely exploring in Visual Segment Creator)
           if (!isMarkingCustomSegment && t.isDead && intFrame > 12) {
             prevTracker.hadGameplay = false;
+            if (!st.isReplayingInputs) {
+              const curDeaths = deathCoordsBySprintRef.current[profile.sprintId] || [];
+              curDeaths.push([t.playerWorldX, t.playerWorldY]);
+              deathCoordsBySprintRef.current[profile.sprintId] = curDeaths;
+              st.hazardZones = computeKdeHazardZones(
+                curDeaths,
+                profile.startWorldX,
+                profile.goalWorldX
+              );
+              const rivalForCoach = targetGhostRef.current ?? serverTopGhostRef.current;
+              if (rivalForCoach && recordedFramesRef.current.length >= 2) {
+                const analysis = analyzeRunMistakeVsRival(
+                  [...recordedFramesRef.current, [intFrame, t.playerWorldX, t.playerWorldY]],
+                  rivalForCoach,
+                  profile.startWorldX,
+                  profile.goalWorldX
+                );
+                if (analysis) {
+                  mistakeCoachRef.current = analysis;
+                  setMistakeCoach(analysis);
+                  st.coachArc = analysis.optimalArc;
+                }
+              }
+            }
             if (st.isAttractReplay && activeAttractCandidateRef.current) {
               void resetToStartingLine(true, {
                 attractCandidate: activeAttractCandidateRef.current,
@@ -4099,6 +4308,20 @@ export default function BitgeistArena({
 
             const rival = targetGhostRef.current;
             const currentTag = playerTagRef.current;
+
+            // Stage 17: Compute DTW Trajectory Mistake Inflection Analysis vs #1 / Active Rival
+            const rivalForCoach = rival ?? serverTopGhostRef.current;
+            if (rivalForCoach && finalFrames.length >= 2) {
+              const analysis = analyzeRunMistakeVsRival(
+                finalFrames,
+                rivalForCoach,
+                profile.startWorldX,
+                profile.goalWorldX
+              );
+              mistakeCoachRef.current = analysis;
+              setMistakeCoach(analysis);
+              st.coachArc = analysis ? analysis.optimalArc : null;
+            }
 
             const totalGhosts = 1;
             const deadGhostsCount =
@@ -4719,10 +4942,39 @@ export default function BitgeistArena({
       }
 
       if (isRomModalOpenRef.current || isVictoryOpenRef.current) {
+        if (
+          isVictoryOpenRef.current &&
+          e.code === 'KeyI' &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.repeat &&
+          mistakeCoachRef.current
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          handlePracticeMistakeCoach();
+          return;
+        }
         // Prevent gameplay keys from controlling the emulator behind an open modal
         if (RACE_TRIGGER_CODES.has(e.code) || isResetKey || e.code === 'ArrowDown') {
           e.stopPropagation();
         }
+        return;
+      }
+
+      if (
+        e.code === 'KeyI' &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.repeat &&
+        segmentCreatorStepRef.current === 'idle' &&
+        mistakeCoachRef.current
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        handlePracticeMistakeCoach();
         return;
       }
 
@@ -4922,6 +5174,7 @@ export default function BitgeistArena({
     handleCancelSegmentCreator,
     handleDropPracticePin,
     handleManualRetry,
+    handlePracticeMistakeCoach,
     handleStepCelesteLevel,
     handleTakeoverFromReplay,
     handleToggleMusicMute,
@@ -5520,6 +5773,7 @@ export default function BitgeistArena({
               layout="horizontal"
               onSelectTopRecord={handleSelectTopRecord}
               onSelectMyPb={handleSelectMyPb}
+              onSelectApexTas={handleSelectApexTas}
               onSelectCustomRival={handleSelectCustomRival}
               onWatchGhostReplay={handleWatchGhostReplay}
               onToggleSwarm={handleToggleSwarm}
@@ -5618,8 +5872,12 @@ export default function BitgeistArena({
                           </span>
                         ) : targetGhost ? (
                           <span className="text-[10px] font-black uppercase tracking-tight text-[#FFE74C]/85 truncate">
-                            {rivalMode === 'pb' ? '⚡ PB' : '👑'} @{targetGhost.tag}{' '}
-                            {(targetGhost.timeMs / 1000).toFixed(2)}s
+                            {rivalMode === 'pb'
+                              ? '⚡ PB'
+                              : rivalMode === 'apex'
+                                ? '🧬 APEX'
+                                : '👑'}{' '}
+                            @{targetGhost.tag} {(targetGhost.timeMs / 1000).toFixed(2)}s
                           </span>
                         ) : (
                           <span className="text-[10px] font-black uppercase tracking-wider text-white/50">
@@ -5643,6 +5901,11 @@ export default function BitgeistArena({
                           handleSelectDailyChallenge();
                         }
                       }}
+                      data-wr-pace={
+                        !isAttractMode && raceStatus === 'racing' && liveRank === 1
+                          ? 'true'
+                          : 'false'
+                      }
                       className="crt-curved-glass aspect-[4/3] w-full cursor-pointer"
                     >
                       {/* Live Libretro WebAssembly Core Canvas */}
@@ -5906,6 +6169,7 @@ export default function BitgeistArena({
                   layout="vertical"
                   onSelectTopRecord={handleSelectTopRecord}
                   onSelectMyPb={handleSelectMyPb}
+                  onSelectApexTas={handleSelectApexTas}
                   onSelectCustomRival={handleSelectCustomRival}
                   onWatchGhostReplay={handleWatchGhostReplay}
                   onToggleSwarm={handleToggleSwarm}
@@ -5990,6 +6254,8 @@ export default function BitgeistArena({
         relayLegTimesMs={completedRelayLegsMs}
         pbGhost={localPbGhost}
         targetGhost={finishStats.racedTargetGhost}
+        mistakeCoach={mistakeCoach}
+        onPracticeMistakeCoach={handlePracticeMistakeCoach}
         playerTag={playerTag}
         replayClip={latestReplayClip}
         identityInfo={identityInfo}

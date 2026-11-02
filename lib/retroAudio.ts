@@ -218,3 +218,24 @@ export function playGoalFanfareSfx(beatTarget: boolean): void {
     });
   }
 }
+
+/**
+ * Stage 20: Psychoacoustic Pace-Sonification Cue.
+ * Encodes live split status at 25% / 50% / 75% sector checkpoints so runners receive
+ * eyes-free harmonic feedback without looking away from platformer obstacles.
+ */
+export function playPsychoacousticPaceCue(status: 'gold' | 'mint' | 'coral'): void {
+  const ctx = getReadyAudioContext();
+  if (!ctx) return;
+  if (status === 'gold') {
+    scheduleChipTone(ctx, { freqHz: 659.25, startOffsetSec: 0, durationSec: 0.028, type: 'triangle', peakGain: 0.042 });
+    scheduleChipTone(ctx, { freqHz: 987.77, startOffsetSec: 0.028, durationSec: 0.032, type: 'triangle', peakGain: 0.045 });
+    scheduleChipTone(ctx, { freqHz: 1318.51, startOffsetSec: 0.06, durationSec: 0.045, type: 'triangle', peakGain: 0.048 });
+  } else if (status === 'mint') {
+    scheduleChipTone(ctx, { freqHz: 523.25, startOffsetSec: 0, durationSec: 0.028, type: 'triangle', peakGain: 0.036 });
+    scheduleChipTone(ctx, { freqHz: 659.25, startOffsetSec: 0.028, durationSec: 0.036, type: 'triangle', peakGain: 0.038 });
+  } else {
+    scheduleChipTone(ctx, { freqHz: 329.63, startOffsetSec: 0, durationSec: 0.028, type: 'triangle', peakGain: 0.028 });
+    scheduleChipTone(ctx, { freqHz: 293.66, startOffsetSec: 0.028, durationSec: 0.034, type: 'triangle', peakGain: 0.026 });
+  }
+}

@@ -17,6 +17,10 @@ import {
   NES_INPUT_START,
   NES_INPUT_UP,
 } from './inputReplay';
+import {
+  createCausalRamScannerState,
+  scanCausalRamRegisters,
+} from './ramAutoScanner';
 import { CONSOLE_SYSTEM_LABELS, detectRomConsoleSystem } from './romVault';
 import type {
   ConsoleSystemId,
@@ -1126,9 +1130,28 @@ function createUniversalNesProfile(romId: string, rawName: string): RomProfile {
       const dx = prev.hadGameplay ? spriteX - prev.oamX : 0;
       const isAnimatingWalk = tileChanged || prev.animHoldFrames > 0;
 
-      // Advance estimated camera scroll when walking right against scroll lock OR climbing in vertical games
+      // Stage 16: Online Causal RAM-Entropy Auto-Discovery ("Zero-Shot Memory Scanner")
+      if (!prev.ramScanner) {
+        prev.ramScanner = createCausalRamScannerState();
+      }
+      const discovered = scanCausalRamRegisters(
+        ram,
+        prev.ramScanner,
+        liveInputMask,
+        oamBase,
+        spriteX,
+        rawDx
+      );
+
+      // Advance camera scroll using discovered hardware scroll register when available, or OAM kinematics fallback
       let nextCameraX = prev.cameraX;
-      if (Math.abs(dx) < 28) {
+      if (
+        discovered.hardwareScrollDelta !== null &&
+        discovered.scrollConfidence >= 6 &&
+        discovered.hardwareScrollDelta !== 0
+      ) {
+        nextCameraX = Math.max(0, prev.cameraX + discovered.hardwareScrollDelta);
+      } else if (Math.abs(dx) < 28) {
         if (dx > 0 && spriteX >= 96) {
           nextCameraX = prev.cameraX + dx * 0.72;
         } else if (holdingRight && !holdingLeft && spriteX >= 88) {

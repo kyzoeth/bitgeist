@@ -10,6 +10,7 @@ import {
   tagToSlug,
 } from '@/lib/ghostShare';
 import { computeRunSplitEntries } from '@/lib/splitTracker';
+import { MistakeInflectionAnalysis } from '@/lib/speedrunIntelligence';
 import {
   ArcadeIdentityInfo,
   ConsoleSystemId,
@@ -45,6 +46,7 @@ interface VictoryShareModalProps {
   relayLegTimesMs?: readonly number[] | null;
   pbGhost?: GhostRun | null;
   targetGhost: GhostRun | null;
+  mistakeCoach?: MistakeInflectionAnalysis | null;
   playerTag: string;
   replayClip?: FinalizedVideoClip | null;
   identityInfo?: ArcadeIdentityInfo | null;
@@ -53,6 +55,7 @@ interface VictoryShareModalProps {
   onIdentityUpdated?: (identity: ArcadeIdentityInfo, conflictMsg?: string | null) => void;
   onRunSaved: () => void;
   onWatchInputReplay?: () => void;
+  onPracticeMistakeCoach?: () => void;
   onRaceAgain: () => void;
   onClose: () => void;
 }
@@ -108,6 +111,7 @@ export default function VictoryShareModal({
   relayLegTimesMs,
   pbGhost,
   targetGhost,
+  mistakeCoach,
   playerTag,
   replayClip,
   identityInfo,
@@ -116,6 +120,7 @@ export default function VictoryShareModal({
   onIdentityUpdated,
   onRunSaved,
   onWatchInputReplay,
+  onPracticeMistakeCoach,
   onRaceAgain,
   onClose,
 }: VictoryShareModalProps) {
@@ -441,6 +446,33 @@ export default function VictoryShareModal({
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Stage 17: Counterfactual DTW Trajectory Coach & 1-Click Mistake Practice Warp */}
+          {mistakeCoach && mistakeCoach.timeLostMs >= 20 && (
+            <div className="bg-[#18171C] text-[#FFFDF7] border-2 border-[#111111] rounded-xl px-3 py-2 flex items-center justify-between gap-2 shadow-[2px_2px_0_#111111]">
+              <div className="min-w-0 text-left">
+                <div className="text-[9px] font-black uppercase text-[#00F5D4] tracking-wider">
+                  🧠 AI TRAJECTORY COACH • {mistakeCoach.sectorLabel} INFLECTION
+                </div>
+                <div className="text-[10.5px] font-black uppercase text-[#FFE74C] truncate mt-0.5">
+                  {mistakeCoach.coachHint}
+                </div>
+              </div>
+              {onPracticeMistakeCoach && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void persistRenamedTagIfNeeded();
+                    onPracticeMistakeCoach();
+                  }}
+                  aria-label="Drill Mistake with Counterfactual Coach (I)"
+                  className="px-2.5 py-1.5 rounded-lg bg-[#00F5D4] hover:bg-[#FFE74C] text-[#111111] border-2 border-[#111111] font-black text-[9.5px] uppercase leading-none cursor-pointer shrink-0 shadow-[1.5px_1.5px_0_#111111]"
+                >
+                  ⚡ DRILL {mistakeCoach.sectorLabel} [I]
+                </button>
+              )}
             </div>
           )}
 

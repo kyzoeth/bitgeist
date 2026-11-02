@@ -95,6 +95,8 @@ const verifierMod = await import('../lib/headlessVerifier.ts');
 const romPatcherMod = await import('../lib/romPatcher.ts');
 const splitTrackerMod = await import('../lib/splitTracker.ts');
 const dailySprintsMod = await import('../lib/dailySprints.ts');
+const ramAutoScannerMod = await import('../lib/ramAutoScanner.ts');
+const speedrunIntelMod = await import('../lib/speedrunIntelligence.ts');
 
 function buildSingleEntryZipBytes(entryName, payloadBytes, useDeflate = false) {
   const nameBytes = Buffer.from(entryName, 'utf8');
@@ -854,5 +856,132 @@ describe('Bitgeist Stages 1-5 Regression Suite', () => {
     assert.ok(standings.length >= 3);
     assert.ok(standings[0].roomsCleared >= 1);
     assert.ok(standings[0].totalTimeMs >= 1000);
+  });
+
+  it('executes Stages 16-19 Speedrun Intelligence: Causal RAM Auto-Discovery, DTW Mistake Coach, APEX•TAS Synthesis, KDE Hazard Zones, and 1F Input Rhythm', () => {
+    // Stage 16: Causal RAM-Entropy Auto-Discovery
+    const scanner = ramAutoScannerMod.createCausalRamScannerState();
+    const ram = new Uint8Array(2048);
+    let simX = 56;
+    let simScroll = 0;
+    let lockedResult = null;
+    for (let f = 0; f < 30; f++) {
+      const oamDx = f < 20 ? 2 : 0;
+      simX += oamDx;
+      if (f >= 12) simScroll += 2;
+      ram[0x0086] = simX & 0xff;
+      ram[0x00fd] = simScroll & 0xff;
+      lockedResult = ramAutoScannerMod.scanCausalRamRegisters(
+        ram,
+        scanner,
+        inputReplayMod.NES_INPUT_RIGHT,
+        0x0200,
+        simX,
+        oamDx
+      );
+    }
+    assert.ok(lockedResult);
+    assert.equal(lockedResult.playerXAddr, 0x0086);
+    assert.equal(lockedResult.scrollAddr, 0x00fd);
+    assert.ok(lockedResult.playerXConfidence >= 4);
+    assert.ok(lockedResult.scrollConfidence >= 6);
+    assert.equal(lockedResult.hardwareScrollDelta, 2);
+
+    // Stage 17: DTW Trajectory Diffing & Counterfactual Mistake Coach
+    const rivalGhost = {
+      id: 'rival-wr',
+      slug: 'rival-wr',
+      tag: 'ALEX',
+      romId: romProfilesMod.CELESTE_ROM_ID,
+      consoleSystem: 'nes',
+      sprintId: 'celeste:c0',
+      romTitle: 'CELESTE 1-A',
+      timeMs: 10_000,
+      beatenCount: 1,
+      totalGhosts: 10,
+      emojiReceipt: '⚡🏁',
+      createdAt: new Date().toISOString(),
+      frames: [
+        [0, 32, 176],
+        [120, 340, 168],
+        [240, 648, 148],
+        [360, 956, 160],
+        [480, 1264, 152],
+      ],
+    };
+    const slowerRunnerFrames = [
+      [0, 32, 176],
+      [125, 340, 176],
+      [310, 648, 176], // lost 65 frames (~1.08s) in sector 2
+      [435, 956, 168],
+      [560, 1264, 160],
+    ];
+    const coach = speedrunIntelMod.analyzeRunMistakeVsRival(
+      slowerRunnerFrames,
+      rivalGhost,
+      32,
+      1264
+    );
+    assert.ok(coach);
+    assert.equal(coach.sectorIndex, 5);
+    assert.equal(coach.sectorLabel, 'S5');
+    assert.ok(coach.timeLostMs >= 300);
+    assert.ok(coach.optimalArc.length >= 1);
+    assert.ok(coach.coachHint.includes('S5'));
+
+    // Stage 18: Crowd-Synthesized "APEX•TAS" Pacemaker
+    const runnerB = {
+      ...rivalGhost,
+      id: 'rival-2',
+      slug: 'rival-2',
+      tag: 'BLAZE',
+      timeMs: 10_200,
+      frames: [
+        [0, 32, 176],
+        [95, 340, 160], // faster in early sectors!
+        [250, 648, 152],
+        [380, 956, 160],
+        [510, 1264, 152],
+      ],
+    };
+    const apexGhost = speedrunIntelMod.synthesizeApexTasGhost(
+      [rivalGhost, runnerB],
+      32,
+      1264
+    );
+    assert.ok(apexGhost);
+    assert.equal(apexGhost.tag, 'APEX•TAS');
+    assert.equal(apexGhost.color, '#00F5D4');
+    assert.ok(apexGhost.timeMs < rivalGhost.timeMs);
+    assert.ok(apexGhost.frames.length >= 10);
+
+    // Stage 19a: Spatial KDE Hazard Zone Locator
+    const hazards = speedrunIntelMod.computeKdeHazardZones(
+      [
+        [410, 184],
+        [414, 184],
+        [418, 184],
+      ],
+      32,
+      1264
+    );
+    assert.ok(hazards.length >= 1 && hazards.length <= 2);
+    assert.ok(hazards[0].wipePercent >= 42 && hazards[0].wipePercent <= 92);
+
+    // Stage 19b: 1-Frame Input-Rhythm Detector
+    const apexJump = speedrunIntelMod.detectFramePerfectInputBeat(
+      inputReplayMod.NES_INPUT_RIGHT,
+      inputReplayMod.NES_INPUT_RIGHT | inputReplayMod.NES_INPUT_A,
+      2.5,
+      0.5
+    );
+    assert.equal(apexJump, '★ 1F APEX JUMP!');
+    const dashBoost = speedrunIntelMod.detectFramePerfectInputBeat(
+      inputReplayMod.NES_INPUT_RIGHT,
+      inputReplayMod.NES_INPUT_RIGHT | inputReplayMod.NES_INPUT_B,
+      2.6,
+      -1.5
+    );
+    assert.equal(dashBoost, '⚡ 1F DASH BOOST!');
   });
 });

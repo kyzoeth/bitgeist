@@ -8,6 +8,7 @@ import {
   getRunnerArchetypeForTag,
   selectRunnerPose,
 } from '@/lib/hologramRunners';
+import { CoachPromptNode, KdeHazardZone } from '@/lib/speedrunIntelligence';
 import {
   FloatingPopup,
   GhostKeyframe,
@@ -44,6 +45,8 @@ export interface LiveOverlayState {
   attractGhostTimeMs?: number | null;
   attractIsDare?: boolean;
   finishCelebration?: FinishCelebrationState | null;
+  coachArc?: readonly CoachPromptNode[] | null;
+  hazardZones?: readonly KdeHazardZone[] | null;
 }
 
 interface GhostCanvasOverlayProps {
@@ -474,7 +477,7 @@ export default function GhostCanvasOverlay({
 
       if (!isAttract && rivalGhost && rivalGhost.frames.length > 0) {
         const g = rivalGhost;
-        const runnerColor = '#FFE74C';
+        const runnerColor = g.tag === 'APEX•TAS' ? '#00F5D4' : '#FFE74C';
         const hasPos = interpolateGhostPosInto(g.frames, effectiveFrame, g.diedAtFrame, scratchPos);
 
         if (hasPos && !scratchPos.alive) {
@@ -698,6 +701,76 @@ export default function GhostCanvasOverlay({
           ctx.fillRect(pinSx + 1, pinSy - 35, ptw + 6, 11);
           ctx.fillStyle = '#111111';
           ctx.fillText(pinText, pinSx + 4, pinSy - 26);
+        }
+      }
+
+      // 2f. Stage 17: Counterfactual DTW Trajectory Coach Optimal Input Arc (When Drilling a Mistake)
+      const activeCoachArc = st.coachArc;
+      if (activeCoachArc && activeCoachArc.length > 0 && !isAttract && !isWon) {
+        ctx.save();
+        // Draw dashed glowing cyan trajectory line connecting arc nodes
+        for (let i = 1; i < activeCoachArc.length; i++) {
+          const n0 = activeCoachArc[i - 1];
+          const n1 = activeCoachArc[i];
+          const x0 = Math.round((n0.worldX - st.cameraX) * scale);
+          const y0 = Math.round((n0.worldY - camY) * scale) - 14;
+          const x1 = Math.round((n1.worldX - st.cameraX) * scale);
+          const y1 = Math.round((n1.worldY - camY) * scale) - 14;
+          if ((x0 < -40 && x1 < -40) || (x0 > canvas.width + 40 && x1 > canvas.width + 40)) {
+            continue;
+          }
+          ctx.strokeStyle = '#111111';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x1, y1);
+          ctx.stroke();
+
+          ctx.strokeStyle = '#00F5D4';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x1, y1);
+          ctx.stroke();
+        }
+
+        // Draw actionable JUMP / DASH prompt markers along the arc
+        for (let i = 0; i < activeCoachArc.length; i++) {
+          const node = activeCoachArc[i];
+          if (node.action === 'move') continue;
+          const nx = Math.round((node.worldX - st.cameraX) * scale);
+          const ny = Math.round((node.worldY - camY) * scale) - 22;
+          if (nx < -48 || nx > canvas.width + 48 || ny < 16 || ny > canvas.height - 16) continue;
+
+          ctx.font = '900 10px monospace';
+          const tw = Math.ceil(ctx.measureText(node.label).width);
+          const bx = Math.round(nx - tw / 2 - 5);
+          const by = ny - 18;
+          ctx.fillStyle = '#111111';
+          ctx.fillRect(bx - 1, by - 1, tw + 12, 16);
+          ctx.fillStyle = node.action === 'jump' ? '#00F5D4' : '#FFE74C';
+          ctx.fillRect(bx, by, tw + 10, 14);
+          ctx.fillStyle = '#111111';
+          ctx.fillText(node.label, bx + 5, by + 11);
+        }
+        ctx.restore();
+      }
+
+      // 2g. Stage 19: Spatial KDE Death-Field Choke-Point Hazard Beacons
+      const hazardList = st.hazardZones;
+      if (hazardList && hazardList.length > 0 && !isAttract && !isWon && !isWaiting) {
+        for (let hIdx = 0; hIdx < hazardList.length; hIdx++) {
+          const hz = hazardList[hIdx];
+          const hx = Math.round((hz.worldX - st.cameraX) * scale);
+          if (hx < 24 || hx > canvas.width - 24) continue;
+          const hy = canvas.height - 16;
+          ctx.fillStyle = '#111111';
+          ctx.fillRect(hx - 18, hy - 11, 36, 11);
+          ctx.fillStyle = '#EC6553';
+          ctx.fillRect(hx - 17, hy - 10, 34, 9);
+          ctx.fillStyle = '#111111';
+          ctx.font = '900 8px monospace';
+          ctx.fillText(`!${hz.wipePercent}%`, hx - 12, hy - 3);
         }
       }
 
