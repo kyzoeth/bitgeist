@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   DEFAULT_GHOST_PACK_SIZE,
   getGhostsForRom,
+  getRivalrySeriesSummary,
   getTop10CutoffTimeMs,
+  listCommunitySegmentsForRom,
   saveGhostRun,
+  upsertCommunitySegment,
 } from '@/lib/ghostStore';
 import { isHeadlessWasmSupportedRom, verifyNesRunHeadless } from '@/lib/headlessVerifier';
 import { verifyGhostRunIntegrity } from '@/lib/inputReplay';
@@ -14,7 +17,7 @@ import {
 } from '@/lib/playerIdentity';
 import { checkSlidingWindowRateLimit, extractClientIp } from '@/lib/rateLimit';
 import { DEFAULT_PROFILE, DEFAULT_ROM_ID, resolveRomProfile } from '@/lib/romProfiles';
-import { ConsoleSystemId, GhostKeyframe } from '@/lib/types';
+import { ConsoleSystemId, CustomRomSegment, GhostKeyframe } from '@/lib/types';
 
 const VALID_CONSOLE_SYSTEMS = new Set<ConsoleSystemId>(['nes', 'snes', 'genesis', 'gb', 'gba']);
 const MAX_POST_BODY_CHARS = 131_072; // 128 KB hard guard
@@ -99,7 +102,11 @@ export async function GET(req: NextRequest) {
     romTitle,
     consoleSystem,
   });
-  return NextResponse.json(data);
+  const communitySegments = listCommunitySegmentsForRom(romId);
+  return NextResponse.json({
+    ...data,
+    communitySegments,
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -123,6 +130,8 @@ export async function POST(req: NextRequest) {
     }
 
     let body: {
+      action?: string;
+      segment?: CustomRomSegment;
       clientRunId?: string;
       tag?: string;
       romId?: string;
@@ -139,11 +148,27 @@ export async function POST(req: NextRequest) {
       startWorldX?: number;
       goalWorldX?: number;
       inputLog?: string;
+      parentSlug?: string;
+      rivalTag?: string;
     };
     try {
       body = JSON.parse(rawBody) as typeof body;
     } catch {
       return NextResponse.json({ error: 'Malformed JSON body' }, { status: 400 });
+    }
+
+    if (body?.action === 'saveSegment' && body.segment) {
+      const seg = body.segment;
+      if (
+        typeof seg.romId !== 'string' ||
+        !/^[a-zA-Z0-9_-]{8,64}$/.test(seg.romId) ||
+        typeof seg.sprintId !== 'string' ||
+        !/^[a-zA-Z0-9:_-]{3,96}$/.test(seg.sprintId)
+      ) {
+        return NextResponse.json({ error: 'Invalid custom segment metadata' }, { status: 400 });
+      }
+      const communitySegments = upsertCommunitySegment(seg);
+      return NextResponse.json({ ok: true, communitySegments });
     }
 
     const frames = sanitizeKeyframes(body?.frames);
@@ -292,12 +317,24 @@ export async function POST(req: NextRequest) {
       inputLog: verified ? rawInputLog : undefined,
       verified,
       inputDigest: integrity.inputDigest,
+      parentSlug: typeof body.parentSlug === 'string' ? body.parentSlug : undefined,
     });
+
+    const rivalrySeries =
+      typeof body.rivalTag === 'string' && body.rivalTag.trim()
+        ? getRivalrySeriesSummary(
+            sprintId,
+            saved.tag,
+            body.rivalTag,
+            typeof body.parentSlug === 'string' ? body.parentSlug : null
+          )
+        : undefined;
 
     const res = NextResponse.json({
       run: saved,
       identity: tagResolution.identity,
       tagConflict: tagResolution.tagConflict,
+      ...(rivalrySeries ? { rivalrySeries } : {}),
     });
     attachIdentityCookie(res, session.ownerId);
     return res;

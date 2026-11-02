@@ -9,7 +9,14 @@ import {
   sanitizeArcadeTag,
   tagToSlug,
 } from '@/lib/ghostShare';
-import { ArcadeIdentityInfo, ConsoleSystemId, GhostKeyframe, GhostRun } from '@/lib/types';
+import { computeRunSplitEntries } from '@/lib/splitTracker';
+import {
+  ArcadeIdentityInfo,
+  ConsoleSystemId,
+  GhostKeyframe,
+  GhostRun,
+  RivalrySeriesSummary,
+} from '@/lib/types';
 import { FinalizedVideoClip } from '@/lib/videoClipRecorder';
 
 interface VictoryShareModalProps {
@@ -33,6 +40,10 @@ interface VictoryShareModalProps {
   inputLog?: string;
   verified?: boolean;
   isDare?: boolean;
+  parentSlug?: string | null;
+  rivalrySeries?: RivalrySeriesSummary | null;
+  relayLegTimesMs?: readonly number[] | null;
+  pbGhost?: GhostRun | null;
   targetGhost: GhostRun | null;
   playerTag: string;
   replayClip?: FinalizedVideoClip | null;
@@ -92,6 +103,10 @@ export default function VictoryShareModal({
   inputLog,
   verified,
   isDare,
+  parentSlug,
+  rivalrySeries,
+  relayLegTimesMs,
+  pbGhost,
   targetGhost,
   playerTag,
   replayClip,
@@ -211,6 +226,8 @@ export default function VictoryShareModal({
           startWorldX,
           goalWorldX,
           inputLog,
+          parentSlug: parentSlug || undefined,
+          rivalTag: targetGhost?.tag,
         }),
       });
       if (res.ok) {
@@ -306,6 +323,16 @@ export default function VictoryShareModal({
   const secondaryButtonsCount =
     2 + (replayClip ? 1 : 0) + (Boolean(inputLog) && onWatchInputReplay ? 1 : 0);
 
+  const splitEntries = computeRunSplitEntries({
+    runnerFrames: frames,
+    runnerTimeMs: timeMs,
+    startWorldX,
+    goalWorldX,
+    targetGhost,
+    pbGhost,
+    relayLegTimesMs,
+  });
+
   return (
     <div
       role="dialog"
@@ -356,6 +383,53 @@ export default function VictoryShareModal({
               </span>
             )}
           </div>
+
+          {/* Stage 6: Gold / Mint / Coral 3-Sector Micro-Split Strip */}
+          {splitEntries.length > 0 && (
+            <div
+              aria-label="Run Sector Splits"
+              className="grid grid-cols-3 gap-1.5"
+            >
+              {splitEntries.map((sp) => {
+                const bgClass =
+                  sp.status === 'gold'
+                    ? 'bg-[#FFE74C]'
+                    : sp.status === 'mint'
+                      ? 'bg-[#7FD1AE]'
+                      : 'bg-[#FFAD87]';
+                const deltaSec =
+                  sp.deltaVsRivalMs !== null ? sp.deltaVsRivalMs / 1000 : null;
+                return (
+                  <div
+                    key={sp.label}
+                    className={`${bgClass} border-2 border-[#111111] rounded-xl px-2 py-1 text-center shadow-[1.5px_1.5px_0_#111111]`}
+                  >
+                    <div className="text-[8.5px] font-black uppercase leading-none text-[#111111]/75">
+                      {sp.label}
+                    </div>
+                    <div className="text-[11px] font-black tabular-nums leading-tight text-[#111111] mt-0.5">
+                      {(sp.runnerMs / 1000).toFixed(2)}s
+                    </div>
+                    {deltaSec !== null && (
+                      <div className="text-[8px] font-black tabular-nums leading-none text-[#111111]/85">
+                        {deltaSec <= 0 ? `${deltaSec.toFixed(2)}s` : `+${deltaSec.toFixed(2)}s`}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Stage 7: Head-to-Head Rivalry Series Scoreboard */}
+          {rivalrySeries && rivalrySeries.totalBouts > 0 && (
+            <div className="bg-[#EFE6CE] border-2 border-[#111111] rounded-xl px-3 py-1.5 flex items-center justify-between gap-2 text-[10px] font-black uppercase">
+              <span>⚔️ RIVALRY SERIES</span>
+              <span className="bg-[#111111] text-[#FFE74C] rounded px-2 py-0.5 tabular-nums">
+                @{cleanTag} {rivalrySeries.playerWins} – {rivalrySeries.rivalWins} @{rivalrySeries.rivalTag}
+              </span>
+            </div>
+          )}
 
           {/* Player Name + Zero-Signup Identity / Streak + Dare Card Preview */}
           <div className="bg-white border-2 border-[#111111] rounded-xl p-3 space-y-2.5">

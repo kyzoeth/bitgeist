@@ -12,7 +12,13 @@ import {
   DEFAULT_ROM_ID,
   NOVA_ROM_ID,
 } from './romProfiles';
-import type { ConsoleSystemId, GhostKeyframe, GhostRun } from './types';
+import type {
+  ConsoleSystemId,
+  CustomRomSegment,
+  GhostKeyframe,
+  GhostRun,
+  RivalrySeriesSummary,
+} from './types';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DEFAULT_SQLITE_FILE = path.join(DATA_DIR, 'bitgeist.sqlite');
@@ -157,6 +163,9 @@ function rowToGhostRun(row: Record<string, unknown>): GhostRun | null {
   if (typeof row.input_digest === 'string' && row.input_digest) {
     run.inputDigest = row.input_digest;
   }
+  if (typeof row.parent_slug === 'string' && row.parent_slug) {
+    run.parentSlug = row.parent_slug;
+  }
 
   return run;
 }
@@ -296,8 +305,24 @@ function getDb(): DatabaseSync {
       goal_world_x INTEGER,
       input_log TEXT,
       verified INTEGER NOT NULL DEFAULT 0,
-      input_digest TEXT
+      input_digest TEXT,
+      parent_slug TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS community_segments (
+      id TEXT PRIMARY KEY,
+      rom_id TEXT NOT NULL,
+      sprint_id TEXT NOT NULL UNIQUE,
+      code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      start_world_x INTEGER NOT NULL,
+      goal_world_x INTEGER NOT NULL,
+      preview_data_url TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_community_segments_rom
+      ON community_segments (rom_id, created_at ASC);
 
     CREATE INDEX IF NOT EXISTS idx_ghost_runs_sprint_time
       ON ghost_runs (sprint_id, time_ms ASC);
@@ -306,6 +331,16 @@ function getDb(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_ghost_runs_tag_sprint
       ON ghost_runs (tag_slug, sprint_id, time_ms ASC);
   `);
+
+  // Safe schema migration for existing SQLite databases created prior to Stage 7
+  try {
+    const cols = db.prepare('PRAGMA table_info(ghost_runs)').all() as Array<{ name?: string }>;
+    if (!cols.some((c) => c.name === 'parent_slug')) {
+      db.exec('ALTER TABLE ghost_runs ADD COLUMN parent_slug TEXT;');
+    }
+  } catch {
+    // Column already present
+  }
 
   migrateLegacyJsonIfEmpty(db);
 
@@ -929,6 +964,7 @@ export async function saveGhostRun(input: {
   inputLog?: string;
   verified?: boolean;
   inputDigest?: string;
+  parentSlug?: string;
 }): Promise<GhostRun> {
   return withSqliteRetry((db) => {
     const tag = sanitizeArcadeTag(input.tag);
@@ -939,6 +975,7 @@ export async function saveGhostRun(input: {
   const clampedBeaten = Math.max(0, Math.round(input.beatenCount));
   const clampedTotal = Math.max(1, Math.round(input.totalGhosts));
   const boundedFrames = input.frames.slice(0, 900);
+  const cleanParentSlug = input.parentSlug ? normalizeDareSlug(input.parentSlug) : undefined;
 
   const cleanClientRunId = input.clientRunId
     ? input.clientRunId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48)
@@ -1002,6 +1039,7 @@ export async function saveGhostRun(input: {
     ...(input.inputLog ? { inputLog: input.inputLog } : {}),
     ...(typeof input.verified === 'boolean' ? { verified: input.verified } : {}),
     ...(input.inputDigest ? { inputDigest: input.inputDigest } : {}),
+    ...(cleanParentSlug ? { parentSlug: cleanParentSlug } : {}),
   };
 
   db.exec('BEGIN IMMEDIATE;');
@@ -1011,12 +1049,12 @@ export async function saveGhostRun(input: {
         id, slug, tag, tag_slug, rom_id, console_system, sprint_id, rom_title,
         time_ms, beaten_count, total_ghosts, emoji_receipt, frames_json, died_at_frame,
         color, created_at, daily_number, course_index, start_world_x, goal_world_x,
-        input_log, verified, input_digest
+        input_log, verified, input_digest, parent_slug
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
-        ?, ?, ?
+        ?, ?, ?, ?
       )`
     ).run(
       run.id,
@@ -1041,7 +1079,8 @@ export async function saveGhostRun(input: {
       typeof run.goalWorldX === 'number' ? run.goalWorldX : null,
       run.inputLog ?? null,
       run.verified ? 1 : 0,
-      run.inputDigest ?? null
+      run.inputDigest ?? null,
+      run.parentSlug ?? null
     );
 
     // Per-sprint bounded retention: keep top/recent 500 runs per sprint so disk stays compact
@@ -1063,5 +1102,153 @@ export async function saveGhostRun(input: {
   }
 
     return run;
+  });
+}
+
+export function getRivalrySeriesSummary(
+  sprintId: string,
+  playerTag: string,
+  rivalTag: string,
+  parentSlug?: string | null
+): RivalrySeriesSummary {
+  const cleanPlayer = sanitizeArcadeTag(playerTag);
+  const cleanRival = sanitizeArcadeTag(rivalTag);
+  const playerSlug = tagToSlug(cleanPlayer);
+  const rivalSlug = tagToSlug(cleanRival);
+
+  if (!sprintId || playerSlug === rivalSlug) {
+    return {
+      playerTag: cleanPlayer,
+      rivalTag: cleanRival,
+      playerWins: 0,
+      rivalWins: 0,
+      totalBouts: 0,
+      parentSlug: parentSlug || null,
+    };
+  }
+
+  return withSqliteRetry((db) => {
+    const rows = db
+      .prepare(
+        `SELECT tag_slug, time_ms, created_at
+         FROM ghost_runs
+         WHERE sprint_id = ? AND tag_slug IN (?, ?) AND died_at_frame IS NULL
+         ORDER BY created_at ASC
+         LIMIT 60`
+      )
+      .all(sprintId, playerSlug, rivalSlug) as Array<{
+      tag_slug?: string;
+      time_ms?: number;
+      created_at?: string;
+    }>;
+
+    let bestPlayerMs = Number.POSITIVE_INFINITY;
+    let bestRivalMs = Number.POSITIVE_INFINITY;
+    let playerWins = 0;
+    let rivalWins = 0;
+
+    for (const r of rows) {
+      const tMs = Number(r.time_ms) || 0;
+      if (tMs < 1000) continue;
+      if (r.tag_slug === playerSlug) {
+        if (tMs < bestPlayerMs) bestPlayerMs = tMs;
+        if (Number.isFinite(bestRivalMs)) {
+          if (tMs <= bestRivalMs) playerWins++;
+          else rivalWins++;
+        }
+      } else if (r.tag_slug === rivalSlug) {
+        if (tMs < bestRivalMs) bestRivalMs = tMs;
+        if (Number.isFinite(bestPlayerMs)) {
+          if (tMs <= bestPlayerMs) rivalWins++;
+          else playerWins++;
+        }
+      }
+    }
+
+    // If rival is a built-in seed (not in SQLite rows), compare each player run against seed baseline
+    if (!Number.isFinite(bestRivalMs)) {
+      const seedIdx = SEED_NAMES.findIndex((n) => tagToSlug(n) === rivalSlug);
+      if (seedIdx >= 0) {
+        const seedRun = buildSeedGhostRun(seedIdx, { romId: DEFAULT_ROM_ID, sprintId });
+        bestRivalMs = seedRun.timeMs;
+        playerWins = 0;
+        rivalWins = 0;
+        for (const r of rows) {
+          if (r.tag_slug !== playerSlug) continue;
+          const tMs = Number(r.time_ms) || 0;
+          if (tMs <= bestRivalMs) playerWins++;
+          else rivalWins++;
+        }
+      }
+    }
+
+    return {
+      playerTag: cleanPlayer,
+      rivalTag: cleanRival,
+      playerWins,
+      rivalWins,
+      totalBouts: playerWins + rivalWins,
+      parentSlug: parentSlug || null,
+    };
+  });
+}
+
+export function upsertCommunitySegment(segment: CustomRomSegment): CustomRomSegment[] {
+  return withSqliteRetry((db) => {
+    const romId = String(segment.romId || '').slice(0, 64);
+    const sprintId = String(segment.sprintId || '').slice(0, 80);
+    if (!romId || !sprintId) return [];
+    const id = String(segment.id || sprintId).slice(0, 80);
+    const code = String(segment.code || 'S1').slice(0, 8).toUpperCase();
+    const name = String(segment.name || 'CUSTOM SPRINT').slice(0, 28).toUpperCase();
+    const startWorldX = Math.max(0, Math.round(Number(segment.startWorldX) || 0));
+    const goalWorldX = Math.max(startWorldX + 120, Math.round(Number(segment.goalWorldX) || 640));
+    const previewDataUrl =
+      typeof segment.previewDataUrl === 'string' && segment.previewDataUrl.length <= 48_000
+        ? segment.previewDataUrl
+        : null;
+    const createdAt = Math.round(Number(segment.createdAt) || Date.now());
+
+    db.prepare(
+      `INSERT INTO community_segments (
+        id, rom_id, sprint_id, code, name, start_world_x, goal_world_x, preview_data_url, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(sprint_id) DO UPDATE SET
+        code = excluded.code,
+        name = excluded.name,
+        start_world_x = excluded.start_world_x,
+        goal_world_x = excluded.goal_world_x,
+        preview_data_url = COALESCE(excluded.preview_data_url, community_segments.preview_data_url)`
+    ).run(id, romId, sprintId, code, name, startWorldX, goalWorldX, previewDataUrl, createdAt);
+
+    return listCommunitySegmentsForRom(romId);
+  });
+}
+
+export function listCommunitySegmentsForRom(romId: string): CustomRomSegment[] {
+  if (!romId || romId === CELESTE_ROM_ID) return [];
+  return withSqliteRetry((db) => {
+    const rows = db
+      .prepare(
+        `SELECT * FROM community_segments
+         WHERE rom_id = ?
+         ORDER BY created_at ASC
+         LIMIT 5`
+      )
+      .all(romId) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      id: String(r.id || r.sprint_id || ''),
+      romId: String(r.rom_id || romId),
+      sprintId: String(r.sprint_id || ''),
+      code: String(r.code || 'S1'),
+      name: String(r.name || 'CUSTOM SPRINT'),
+      startWorldX: Number(r.start_world_x) || 48,
+      goalWorldX: Number(r.goal_world_x) || 640,
+      ...(typeof r.preview_data_url === 'string' && r.preview_data_url
+        ? { previewDataUrl: r.preview_data_url }
+        : {}),
+      createdAt: Number(r.created_at) || Date.now(),
+    }));
   });
 }

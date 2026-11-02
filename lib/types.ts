@@ -41,6 +41,48 @@ export interface GhostRun {
   inputLog?: string;
   verified?: boolean;
   inputDigest?: string;
+  parentSlug?: string;
+}
+
+export interface GhostSplitEntry {
+  label: string;
+  runnerMs: number;
+  rivalMs: number | null;
+  pbMs: number | null;
+  deltaVsRivalMs: number | null;
+  status: 'gold' | 'mint' | 'coral';
+}
+
+export interface RivalrySeriesSummary {
+  playerTag: string;
+  rivalTag: string;
+  playerWins: number;
+  rivalWins: number;
+  totalBouts: number;
+  parentSlug?: string | null;
+}
+
+export type ReplaySpeed = 1 | 0.5 | 0.25;
+
+export interface LivePartyRunner {
+  runnerId: string;
+  tag: string;
+  color: string;
+  worldX: number;
+  worldY: number;
+  raceFrame: number;
+  status: RaceStatus;
+  finishTimeMs: number | null;
+  updatedAtMs: number;
+}
+
+export interface LivePartyLobbyState {
+  roomCode: string;
+  sprintId: string;
+  romId: string;
+  hostRunnerId: string;
+  countdownStartAtMs: number | null;
+  runners: LivePartyRunner[];
 }
 
 export interface TelemetryFrame {

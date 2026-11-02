@@ -17,6 +17,8 @@ interface LeaderboardDrawerProps {
   playerTag: string;
   identityInfo?: ArcadeIdentityInfo | null;
   layout?: 'vertical' | 'horizontal';
+  swarmEnabled?: boolean;
+  onToggleSwarm?: () => void;
   onSelectTopRecord: () => void;
   onSelectMyPb: () => void;
   onSelectCustomRival: (ghost: GhostRun) => void;
@@ -35,6 +37,8 @@ export default function LeaderboardDrawer({
   playerTag,
   identityInfo,
   layout = 'vertical',
+  swarmEnabled = false,
+  onToggleSwarm,
   onSelectTopRecord,
   onSelectMyPb,
   onSelectCustomRival,
@@ -94,17 +98,38 @@ export default function LeaderboardDrawer({
       <button
         type="button"
         onClick={onSelectTopRecord}
-        aria-pressed={rivalMode === 'top'}
+        aria-pressed={rivalMode === 'top' && !swarmEnabled}
         aria-label="Race #1 Record"
         title="Race #1 Record Ghost"
-        className={`px-1.5 h-[17px] rounded-[4px] border-[1.5px] border-[#111111] font-black text-[7.5px] uppercase leading-none flex items-center justify-center cursor-pointer select-none transition-all duration-75 ${
-          rivalMode === 'top'
+        className={`px-1 h-[17px] rounded-[4px] border-[1.5px] border-[#111111] font-black text-[7px] uppercase leading-none flex items-center justify-center cursor-pointer select-none transition-all duration-75 ${
+          rivalMode === 'top' && !swarmEnabled
             ? 'bg-[#FFE74C] text-[#111111] shadow-[1.5px_1.5px_0_#111111]'
             : 'bg-[#FFFDF7] hover:bg-[#FFE74C] text-[#111111]/85 shadow-[0_1.5px_0_#111111] active:translate-y-[1px] active:shadow-none'
         }`}
       >
         👑 #1
       </button>
+
+      {onToggleSwarm && (
+        <button
+          type="button"
+          onClick={onToggleSwarm}
+          aria-pressed={swarmEnabled}
+          aria-label="Toggle 10-Ghost Swarm"
+          title={
+            swarmEnabled
+              ? '10-Ghost Swarm Active: Racing all Top 10 ghosts simultaneously (Click for 1v1)'
+              : 'Race all Top 10 leaderboard ghosts simultaneously on screen'
+          }
+          className={`px-1 h-[17px] rounded-[4px] border-[1.5px] border-[#111111] font-black text-[7px] uppercase leading-none flex items-center justify-center cursor-pointer select-none transition-all duration-75 ${
+            swarmEnabled
+              ? 'bg-[#7DD3FC] text-[#111111] shadow-[1.5px_1.5px_0_#111111]'
+              : 'bg-[#FFFDF7] hover:bg-[#7DD3FC] text-[#111111]/85 shadow-[0_1.5px_0_#111111] active:translate-y-[1px] active:shadow-none'
+          }`}
+        >
+          ALL 10
+        </button>
+      )}
 
       <button
         type="button"
@@ -119,7 +144,7 @@ export default function LeaderboardDrawer({
             ? `Race your own ${(localPbGhost.timeMs / 1000).toFixed(2)}s Personal Best ghost`
             : 'Finish a run on this segment first to unlock Race My PB'
         }
-        className={`px-1.5 h-[17px] rounded-[4px] border-[1.5px] border-[#111111] font-black text-[7.5px] uppercase leading-none flex items-center justify-center select-none transition-all duration-75 ${
+        className={`px-1 h-[17px] rounded-[4px] border-[1.5px] border-[#111111] font-black text-[6.8px] uppercase leading-none flex items-center justify-center select-none transition-all duration-75 ${
           !localPbGhost
             ? 'bg-[#EAE2C8]/75 text-[#111111]/40 cursor-not-allowed'
             : rivalMode === 'pb'

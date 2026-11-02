@@ -153,6 +153,9 @@ interface SprintLevelCarouselProps {
   segmentCreatorStep?: SegmentCreatorStep;
   segmentDraftDistancePx?: number;
   layout?: 'vertical' | 'horizontal';
+  relayModeEnabled?: boolean;
+  relayLegIndex?: number;
+  onToggleRelayMode?: () => void;
   onSelectDaily: () => void;
   onSelectCourse: (courseIndex: number) => void;
   onSelectCustomSegment?: (segment: CustomRomSegment | null) => void;
@@ -173,6 +176,9 @@ export default function SprintLevelCarousel({
   segmentCreatorStep = 'idle',
   segmentDraftDistancePx = 0,
   layout = 'vertical',
+  relayModeEnabled = false,
+  relayLegIndex = 0,
+  onToggleRelayMode,
   onSelectDaily,
   onSelectCourse,
   onSelectCustomSegment,
@@ -372,12 +378,32 @@ export default function SprintLevelCarousel({
         onMouseLeave={() => setHoveredSlotId(null)}
         className="flex-[44] min-h-0 w-full bg-[#EFE6CE] border-[3px] border-[#111111] rounded-2xl p-2 shadow-[inset_0_2px_0_#FFFDF7,inset_0_-3px_0_#D8CEB4,4px_5px_0px_#111111] flex flex-col gap-1"
       >
-        {/* Top Rack Header: Clear Purpose + Tactile ◀ / ▶ Stepper Buttons */}
-        <div className="shrink-0 h-[21px] flex items-center justify-between gap-1.5 pb-1 border-b-2 border-[#111111]/15">
+        {/* Top Rack Header: Clear Purpose + 3-Room Trifecta Relay Toggle + Tactile ◀ / ▶ Stepper Buttons */}
+        <div className="shrink-0 h-[21px] flex items-center justify-between gap-1 pb-1 border-b-2 border-[#111111]/15">
           <span className="text-[9px] font-black uppercase tracking-wider text-[#111111]/85 leading-none whitespace-nowrap">
             PICK A SEGMENT
           </span>
           <div className="flex items-center gap-1 shrink-0">
+            {isBuiltin && onToggleRelayMode && (
+              <button
+                type="button"
+                onClick={onToggleRelayMode}
+                aria-pressed={relayModeEnabled}
+                aria-label="Toggle 3-Room Trifecta Relay"
+                title={
+                  relayModeEnabled
+                    ? `Daily Trifecta 3-Room Relay Active (Leg ${relayLegIndex + 1}/3) — Click for Single Room`
+                    : 'Daily Trifecta: Chain 3 Celeste segments back-to-back with a continuous relay clock'
+                }
+                className={`px-1 h-[17px] rounded-[4px] border-[1.5px] border-[#111111] font-black text-[7px] uppercase leading-none flex items-center justify-center cursor-pointer select-none transition-all duration-75 ${
+                  relayModeEnabled
+                    ? 'bg-[#E2A4FF] text-[#111111] shadow-[1.5px_1.5px_0_#111111]'
+                    : 'bg-[#FFFDF7] hover:bg-[#E2A4FF] text-[#111111]/85 shadow-[0_1.5px_0_#111111] active:translate-y-[1px] active:shadow-none'
+                }`}
+              >
+                {relayModeEnabled ? `3X L${relayLegIndex + 1}/3` : '3X RELAY'}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onStepLevel(-1)}

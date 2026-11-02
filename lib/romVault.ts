@@ -1,3 +1,4 @@
+import { applyRomPatchBytes, detectRomPatchFormat } from './romPatcher';
 import type {
   ConsoleSystemId,
   CustomRomSegment,
@@ -10,7 +11,8 @@ const DB_VERSION = 1;
 const ROM_STORE = 'roms';
 const STATE_STORE = 'states';
 
-export const SUPPORTED_ROM_EXTENSIONS = '.nes,.zip,.sfc,.smc,.md,.gen,.bin,.gb,.gbc,.gba';
+export const SUPPORTED_ROM_EXTENSIONS =
+  '.nes,.zip,.sfc,.smc,.md,.gen,.bin,.gb,.gbc,.gba,.ips,.bps';
 
 export const CONSOLE_SYSTEM_LABELS: Record<ConsoleSystemId, string> = {
   nes: 'NES',
@@ -492,6 +494,61 @@ export async function saveRomToVault(file: File): Promise<StoredRomEntry> {
     });
   } finally {
     db.close();
+  }
+  return entry;
+}
+
+export async function savePatchedRomToVault(
+  baseBytes: Uint8Array,
+  baseTitle: string,
+  baseConsoleSystem: ConsoleSystemId,
+  patchFile: File
+): Promise<StoredRomEntry> {
+  const patchBytes = new Uint8Array(await patchFile.arrayBuffer());
+  const format = detectRomPatchFormat(patchFile.name, patchBytes);
+  if (!format) {
+    throw new Error('Unsupported patch format. Drop a valid .IPS or .BPS ROM patch file.');
+  }
+
+  let { bytes: patchedBytes } = applyRomPatchBytes(baseBytes, patchBytes, patchFile.name);
+  if (baseConsoleSystem === 'nes') {
+    const nesCheck = inspectNesRomBytes(patchedBytes);
+    if (nesCheck.valid && nesCheck.sanitizedBytes) {
+      patchedBytes = nesCheck.sanitizedBytes;
+    }
+  }
+
+  const romId = await computeSha1Hex(patchedBytes);
+  const patchBaseName =
+    patchFile.name
+      .replace(/\.(ips|bps)$/i, '')
+      .replace(/[_-]+/g, ' ')
+      .trim()
+      .toUpperCase()
+      .slice(0, 22) || `${baseTitle} (${format.toUpperCase()})`;
+
+  const ext = baseConsoleSystem === 'nes' ? '.nes' : `.${baseConsoleSystem}`;
+  const entry: StoredRomEntry = {
+    romId,
+    consoleSystem: baseConsoleSystem,
+    fileName: `${patchBaseName.toLowerCase().replace(/\s+/g, '-')}${ext}`,
+    title: patchBaseName,
+    bytes: patchedBytes,
+    addedAt: Date.now(),
+  };
+
+  if (typeof indexedDB !== 'undefined') {
+    const db = await openVaultDb();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(ROM_STORE, 'readwrite');
+        tx.objectStore(ROM_STORE).put(entry);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
   }
   return entry;
 }

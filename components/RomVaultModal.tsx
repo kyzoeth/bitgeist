@@ -85,12 +85,12 @@ export default function RomVaultModal({
             </div>
           )}
 
-          {/* Single Hero Action: Choose or Drop Any ROM File */}
+          {/* Single Hero Action: Choose or Drop Any ROM File or .IPS/.BPS Patch */}
           <label className="flex flex-col items-center justify-center gap-2.5 bg-[#FFFDF7] border-[3px] border-dashed border-[#111111] rounded-2xl py-6 px-4 cursor-pointer hover:bg-[#F7EED7] transition text-center">
             <span className="retro-btn bg-[#F5C342] px-4 py-2 text-xs uppercase pointer-events-none">
-              CHOOSE .NES / .ZIP OR ROM
+              CHOOSE .NES / .ZIP / .IPS / .BPS
             </span>
-            <span className="text-xs font-black uppercase">or drag &amp; drop it anywhere</span>
+            <span className="text-xs font-black uppercase">or drag &amp; drop ROM or patch anywhere</span>
 
             <div className="flex flex-wrap items-center justify-center gap-1 pt-0.5">
               {SUPPORTED_CONSOLES.map((sys) => (
@@ -101,6 +101,9 @@ export default function RomVaultModal({
                   {sys}
                 </span>
               ))}
+              <span className="bg-[#7FD1AE] border border-[#111111] rounded px-1.5 py-0.5 text-[10px] font-black">
+                .IPS / .BPS PATCH
+              </span>
             </div>
 
             <span className="text-[11px] font-bold text-[#111111]/70">

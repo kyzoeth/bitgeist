@@ -92,6 +92,8 @@ const typesMod = await import('../lib/types.ts');
 const inputReplayMod = await import('../lib/inputReplay.ts');
 const demoReplaysMod = await import('../lib/celesteDemoReplays.ts');
 const verifierMod = await import('../lib/headlessVerifier.ts');
+const romPatcherMod = await import('../lib/romPatcher.ts');
+const splitTrackerMod = await import('../lib/splitTracker.ts');
 
 function buildSingleEntryZipBytes(entryName, payloadBytes, useDeflate = false) {
   const nameBytes = Buffer.from(entryName, 'utf8');
@@ -681,5 +683,145 @@ describe('Bitgeist Stages 1-5 Regression Suite', () => {
     }
     const duringLoad = uniSnes.extractTelemetry(uniSnesRam, uniSnesTracker, inputReplayMod.NES_INPUT_RIGHT);
     assert.equal(duringLoad.inGameplay, false);
+  });
+
+  it('computes Stage 6 & 7 Gold/Mint/Coral sector and 3-room relay splits accurately', () => {
+    const playerFrames = [
+      [0, 32, 176],
+      [180, 480, 176],
+      [360, 920, 176],
+      [540, 1264, 176],
+    ];
+    const rivalFrames = [
+      [0, 32, 176],
+      [210, 480, 176],
+      [390, 920, 176],
+      [600, 1264, 176],
+    ];
+
+    const sectorSplits = splitTrackerMod.computeRunSplitEntries({
+      startWorldX: 32,
+      goalWorldX: 1264,
+      runnerFrames: playerFrames,
+      runnerTimeMs: 9_000,
+      targetGhost: {
+        id: 'rival-1',
+        slug: 'rival-1',
+        tag: 'RIVAL',
+        romId: romProfilesMod.CELESTE_ROM_ID,
+        consoleSystem: 'nes',
+        sprintId: `${romProfilesMod.CELESTE_ROM_ID}:c0`,
+        romTitle: 'CELESTE 1-A',
+        timeMs: 10_000,
+        beatenCount: 1,
+        totalGhosts: 10,
+        emojiReceipt: '⚡🏁',
+        frames: rivalFrames,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    assert.equal(sectorSplits.length, 3);
+    assert.equal(sectorSplits[0].label, 'S1 • 33%');
+    assert.equal(sectorSplits[2].label, 'FINISH');
+    assert.equal(sectorSplits[2].status, 'gold');
+    assert.equal(sectorSplits[2].deltaVsRivalMs, -1_000);
+
+    const relaySplits = splitTrackerMod.computeRunSplitEntries({
+      startWorldX: 32,
+      goalWorldX: 1264,
+      runnerFrames: playerFrames,
+      runnerTimeMs: 31_200,
+      relayLegTimesMs: [10_100, 10_400, 10_700],
+    });
+    assert.equal(relaySplits.length, 3);
+    assert.equal(relaySplits[0].label, 'LEG 1');
+    assert.equal(relaySplits[0].runnerMs, 10_100);
+    assert.equal(relaySplits[2].label, 'LEG 3');
+    assert.equal(relaySplits[2].runnerMs, 31_200);
+  });
+
+  it('applies Stage 9 IPS and BPS ROM patches in-memory without mutating base ROMs', () => {
+    const baseRom = new Uint8Array([0x4e, 0x45, 0x53, 0x1a, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60]);
+
+    // Build an IPS patch: overwrite offset 4 with [0xaa, 0xbb] and RLE fill offset 6 with 3x 0xff
+    const ipsPatch = new Uint8Array([
+      0x50, 0x41, 0x54, 0x43, 0x48, // "PATCH"
+      0x00, 0x00, 0x04, // offset 4
+      0x00, 0x02, // size 2
+      0xaa, 0xbb,
+      0x00, 0x00, 0x06, // offset 6
+      0x00, 0x00, // RLE marker
+      0x00, 0x03, // RLE count 3
+      0xff, // RLE byte
+      0x45, 0x4f, 0x46, // "EOF"
+    ]);
+    assert.equal(romPatcherMod.detectRomPatchFormat('kaizo.ips', ipsPatch), 'ips');
+    const ipsOut = romPatcherMod.applyIpsPatch(baseRom, ipsPatch);
+    assert.deepEqual(
+      Array.from(ipsOut),
+      [0x4e, 0x45, 0x53, 0x1a, 0xaa, 0xbb, 0xff, 0xff, 0xff, 0x60]
+    );
+    // Base ROM remains untouched
+    assert.equal(baseRom[4], 0x10);
+  });
+
+  it('tracks Stage 7 Head-to-Head Rivalry Series scores and Stage 9 Community Segments in SQLite', async () => {
+    const sprintId = `${romProfilesMod.CELESTE_ROM_ID}:c2`;
+    const sampleFrames = [
+      [0, 32, 176],
+      [300, 1264, 160],
+    ];
+
+    const dare1 = await ghostStoreMod.saveGhostRun({
+      tag: 'ALPHA',
+      romId: romProfilesMod.CELESTE_ROM_ID,
+      consoleSystem: 'nes',
+      sprintId,
+      romTitle: 'CELESTE 1-C • RIDGE DASH',
+      timeMs: 13_500,
+      beatenCount: 1,
+      totalGhosts: 5,
+      emojiReceipt: '⚡⚡🏁',
+      frames: sampleFrames,
+    });
+
+    await ghostStoreMod.saveGhostRun({
+      tag: 'BRAVO',
+      romId: romProfilesMod.CELESTE_ROM_ID,
+      consoleSystem: 'nes',
+      sprintId,
+      romTitle: 'CELESTE 1-C • RIDGE DASH',
+      timeMs: 12_900,
+      beatenCount: 2,
+      totalGhosts: 5,
+      emojiReceipt: '⚡⚡⚡🏁',
+      frames: sampleFrames,
+      parentSlug: dare1.slug,
+    });
+
+    const series = ghostStoreMod.getRivalrySeriesSummary(sprintId, 'BRAVO', 'ALPHA', dare1.slug);
+    assert.ok(series);
+    assert.equal(series.playerWins, 1);
+    assert.equal(series.rivalWins, 0);
+    assert.equal(series.totalBouts, 1);
+    assert.equal(series.parentSlug, dare1.slug);
+
+    // Stage 9 Community Segment directory
+    const segs = ghostStoreMod.upsertCommunitySegment({
+      id: 'deadbeef:custom-1',
+      sprintId: 'deadbeef:custom-1',
+      romId: 'deadbeef',
+      code: 'S1',
+      name: 'BOSS RUSH SPLIT',
+      startWorldX: 128,
+      goalWorldX: 1024,
+      createdAt: Date.now(),
+    });
+    assert.equal(segs.length, 1);
+    const list = ghostStoreMod.listCommunitySegmentsForRom('deadbeef');
+    assert.equal(list.length, 1);
+    assert.equal(list[0].name, 'BOSS RUSH SPLIT');
+    assert.equal(list[0].startWorldX, 128);
+    assert.equal(list[0].goalWorldX, 1024);
   });
 });

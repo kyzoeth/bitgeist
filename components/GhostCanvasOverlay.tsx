@@ -8,7 +8,13 @@ import {
   getRunnerArchetypeForTag,
   selectRunnerPose,
 } from '@/lib/hologramRunners';
-import { FloatingPopup, GhostKeyframe, GhostRun, RaceStatus } from '@/lib/types';
+import {
+  FloatingPopup,
+  GhostKeyframe,
+  GhostRun,
+  LivePartyRunner,
+  RaceStatus,
+} from '@/lib/types';
 
 interface FinishCelebrationState {
   startedAtMs: number;
@@ -41,6 +47,10 @@ export interface LiveOverlayState {
 
 interface GhostCanvasOverlayProps {
   targetGhost: GhostRun | null;
+  swarmGhosts?: readonly GhostRun[];
+  swarmEnabled?: boolean;
+  partyRunners?: readonly LivePartyRunner[];
+  selfRunnerId?: string;
   liveStateRef: React.MutableRefObject<LiveOverlayState>;
   overlayCanvasRef?: React.MutableRefObject<HTMLCanvasElement | null>;
 }
@@ -164,11 +174,19 @@ export function computeGhostSplitDeltaSec(
 
 export default function GhostCanvasOverlay({
   targetGhost,
+  swarmGhosts = [],
+  swarmEnabled = false,
+  partyRunners = [],
+  selfRunnerId = '',
   liveStateRef,
   overlayCanvasRef,
 }: GhostCanvasOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const targetGhostRef = useRef<GhostRun | null>(targetGhost);
+  const swarmGhostsRef = useRef<readonly GhostRun[]>(swarmGhosts);
+  const swarmEnabledRef = useRef<boolean>(swarmEnabled);
+  const partyRunnersRef = useRef<readonly LivePartyRunner[]>(partyRunners);
+  const selfRunnerIdRef = useRef<string>(selfRunnerId);
 
   useEffect(() => {
     if (overlayCanvasRef) {
@@ -184,6 +202,22 @@ export default function GhostCanvasOverlay({
   useEffect(() => {
     targetGhostRef.current = targetGhost;
   }, [targetGhost]);
+
+  useEffect(() => {
+    swarmGhostsRef.current = swarmGhosts;
+  }, [swarmGhosts]);
+
+  useEffect(() => {
+    swarmEnabledRef.current = swarmEnabled;
+  }, [swarmEnabled]);
+
+  useEffect(() => {
+    partyRunnersRef.current = partyRunners;
+  }, [partyRunners]);
+
+  useEffect(() => {
+    selfRunnerIdRef.current = selfRunnerId;
+  }, [selfRunnerId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -306,14 +340,130 @@ export default function GhostCanvasOverlay({
         ctx.fillRect(gateScreenX - 12, beamBottomY, 24, 8);
       }
 
-      // 2. Render Single 1v1 Rival Hologram (#1 Top Score or Friend's Dare; 0 extra ghosts during Attract Demo)
+      // 2. Render Top-10 Swarm Holograms (when Swarm Mode is toggled on) + Primary 1v1 Rival Hologram
       const isAttract = Boolean(st.isAttractReplay);
       const isWaiting = st.raceStatus === 'waiting' && !isAttract;
       const isCountdown = st.raceStatus === 'countdown' && !isAttract;
       const isPreviewStyle = isWaiting || isCountdown || isAttract;
-      // Rival ghost remains poised at frame 0 until GO! so characters never move before the race begins
+      // Rival & Swarm ghosts remain poised at frame 0 until GO! so characters never move before the race begins
       const effectiveFrame = isWaiting || isCountdown ? 0 : st.raceFrame;
       const rivalGhost = targetGhostRef.current;
+
+      if (!isAttract && swarmEnabledRef.current && swarmGhostsRef.current.length > 0) {
+        const swarmList = swarmGhostsRef.current;
+        for (let sIdx = swarmList.length - 1; sIdx >= 0; sIdx--) {
+          const sg = swarmList[sIdx];
+          if (!sg || sg.id === rivalGhost?.id || sg.frames.length === 0) continue;
+          const hasSwarmPos = interpolateGhostPosInto(
+            sg.frames,
+            effectiveFrame,
+            sg.diedAtFrame,
+            scratchPos
+          );
+          if (!hasSwarmPos || !scratchPos.alive) continue;
+
+          const lastSwarmKf = sg.frames[sg.frames.length - 1];
+          const overSwarmFrames = Math.max(0, effectiveFrame - lastSwarmKf[0]);
+          if (overSwarmFrames > COAST_FRAMES_AFTER_FINISH) continue;
+
+          const swarmFade =
+            overSwarmFrames > 0
+              ? Math.max(0, 1 - overSwarmFrames / COAST_FRAMES_AFTER_FINISH)
+              : 1;
+          const drawWorldX = scratchPos.x + overSwarmFrames * 2.4;
+          const drawWorldY = scratchPos.y - overSwarmFrames * 1.1;
+          const sx = Math.round((drawWorldX - st.cameraX) * scale);
+          const sy = Math.round((drawWorldY - camY) * scale);
+          if (sx < -64 || sx > canvas.width + 64 || sy < -64 || sy > canvas.height + 64) continue;
+
+          let vx = overSwarmFrames > 0 ? 2.4 : 0;
+          let vy = overSwarmFrames > 0 ? -1.1 : 0;
+          if (overSwarmFrames === 0 && effectiveFrame > 0.5) {
+            const sampleDt = Math.min(2, effectiveFrame);
+            if (
+              interpolateGhostPosInto(
+                sg.frames,
+                effectiveFrame - sampleDt,
+                sg.diedAtFrame,
+                scratchPrevPos
+              )
+            ) {
+              vx = (scratchPos.x - scratchPrevPos.x) / sampleDt;
+              vy = (scratchPos.y - scratchPrevPos.y) / sampleDt;
+            }
+          }
+
+          const isPoisedAtStart = (isWaiting || isCountdown) && effectiveFrame < 1;
+          const facingLeft = !isPoisedAtStart && vx < -0.18;
+          const archetype = getRunnerArchetypeForTag(sg.tag);
+          const pose = selectRunnerPose({
+            isWaiting: isPoisedAtStart,
+            vx,
+            vy,
+            animPhase: animPhase + sIdx * 0.35,
+            runnerSeed: sIdx + 1,
+            distanceX: drawWorldX,
+          });
+          const swarmColor = sg.color || '#7FD1AE';
+          const sprites = getHologramRunnerSprites(archetype, swarmColor, pose, facingLeft);
+          if (sprites) {
+            ctx.globalAlpha = 0.28 * swarmFade;
+            ctx.drawImage(sprites.main, sx - 18, sy - 38);
+          }
+
+          if (!isWaiting && !isCountdown && !isWon) {
+            const rankTag = `#${sIdx + 1}`;
+            ctx.globalAlpha = 0.65 * swarmFade;
+            ctx.font = '900 9px monospace';
+            const rtw = Math.ceil(ctx.measureText(rankTag).width);
+            const rbx = Math.round(sx - rtw / 2 - 3);
+            const rby = sy - 50;
+            ctx.fillStyle = 'rgba(17, 17, 17, 0.78)';
+            ctx.fillRect(rbx, rby, rtw + 6, 12);
+            ctx.fillStyle = swarmColor;
+            ctx.fillText(rankTag, rbx + 3, rby + 9);
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // 2b. Render Live Party Heat Co-Runners (Stage 10 Live Lobby)
+      if (!isAttract && partyRunnersRef.current.length > 0) {
+        for (let pIdx = 0; pIdx < partyRunnersRef.current.length; pIdx++) {
+          const pr = partyRunnersRef.current[pIdx];
+          if (!pr || pr.runnerId === selfRunnerIdRef.current) continue;
+          const sx = Math.round((pr.worldX - st.cameraX) * scale);
+          const sy = Math.round((pr.worldY - camY) * scale);
+          if (sx < -64 || sx > canvas.width + 64 || sy < -64 || sy > canvas.height + 64) continue;
+          const isPoised = isWaiting || isCountdown || pr.status === 'waiting' || pr.status === 'countdown';
+          const archetype = getRunnerArchetypeForTag(pr.tag);
+          const pose = selectRunnerPose({
+            isWaiting: isPoised,
+            vx: isPoised ? 0 : 1.5,
+            vy: 0,
+            animPhase: animPhase + pIdx * 0.5,
+            runnerSeed: pIdx + 10,
+            distanceX: pr.worldX,
+          });
+          const pColor = pr.color || '#4CC9F0';
+          const sprites = getHologramRunnerSprites(archetype, pColor, pose, false);
+          if (sprites) {
+            ctx.globalAlpha = 0.72;
+            ctx.drawImage(sprites.main, sx - 18, sy - 38);
+          }
+          const pLabel = `⚡@${pr.tag}`;
+          ctx.globalAlpha = 0.92;
+          ctx.font = '900 10px monospace';
+          const ptw = Math.ceil(ctx.measureText(pLabel).width);
+          const pbx = Math.round(sx - ptw / 2 - 4);
+          const pby = sy - 54;
+          ctx.fillStyle = 'rgba(17, 17, 17, 0.9)';
+          ctx.fillRect(pbx, pby, ptw + 8, 13);
+          ctx.fillStyle = pColor;
+          ctx.fillText(pLabel, pbx + 4, pby + 10);
+        }
+        ctx.globalAlpha = 1;
+      }
 
       if (!isAttract && rivalGhost && rivalGhost.frames.length > 0) {
         const g = rivalGhost;

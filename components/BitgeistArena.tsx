@@ -87,6 +87,7 @@ import {
   resolveRomProfile,
   TWIN_DRAGONS_ROM_ID,
 } from '@/lib/romProfiles';
+import { detectRomPatchFormat } from '@/lib/romPatcher';
 import {
   deleteCustomSegmentFromVault,
   deleteRomFromVault,
@@ -97,6 +98,7 @@ import {
   listVaultRoms,
   saveCustomSegmentToVault,
   saveCustomSprintBoundsToVault,
+  savePatchedRomToVault,
   saveRomToVault,
   saveStartStateToVault,
 } from '@/lib/romVault';
@@ -108,7 +110,10 @@ import {
   CustomSprintBounds,
   GhostKeyframe,
   GhostRun,
+  LivePartyLobbyState,
   RaceStatus,
+  ReplaySpeed,
+  RivalrySeriesSummary,
   RomProfile,
   StoredRomEntry,
   TelemetryTrackerState,
@@ -523,6 +528,40 @@ export default function BitgeistArena({
   );
   const [pbRevision, setPbRevision] = useState<number>(0);
 
+  // Stage 6: 10-Ghost Swarm Toggle
+  const [swarmEnabled, setSwarmEnabled] = useState<boolean>(false);
+
+  // Stage 7: 3-Room Daily Trifecta Relay Mode & Head-to-Head Rivalry Series
+  const [relayModeEnabled, setRelayModeEnabled] = useState<boolean>(false);
+  const relayModeEnabledRef = useRef<boolean>(false);
+  const [relayLegIndex, setRelayLegIndex] = useState<number>(0);
+  const relayLegIndexRef = useRef<number>(0);
+  const relayLegTimesRef = useRef<number[]>([]);
+  const [completedRelayLegsMs, setCompletedRelayLegsMs] = useState<number[] | null>(null);
+  const [rivalrySeries, setRivalrySeries] = useState<RivalrySeriesSummary | null>(null);
+
+  // Stage 8: Interactive Replay Studio (Speed, Pause/Step, & Instant Frame Takeover)
+  const [isManualReplayActive, setIsManualReplayActive] = useState<boolean>(false);
+  const [replayPaused, setReplayPaused] = useState<boolean>(false);
+  const replayPausedRef = useRef<boolean>(false);
+  const [replaySpeed, setReplaySpeed] = useState<ReplaySpeed>(1);
+  const replaySpeedRef = useRef<ReplaySpeed>(1);
+  const [replayProgress, setReplayProgress] = useState<{ frame: number; total: number }>({
+    frame: 0,
+    total: 0,
+  });
+
+  // Stage 9: Active Cartridge Bytes Reference for Client-Side .IPS / .BPS Patching
+  const activeRomBytesRef = useRef<Uint8Array | null>(null);
+
+  // Stage 10: Live Multi-Runner Party Heat Lobby
+  const [selfRunnerId] = useState<string>(
+    () => `r_${Math.random().toString(36).slice(2, 9)}`
+  );
+  const [partyLobby, setPartyLobby] = useState<LivePartyLobbyState | null>(null);
+  const [partyCodeInput, setPartyCodeInput] = useState<string>('');
+  const lastTriggeredLobbyCountdownRef = useRef<number | null>(null);
+
   // Victory Modal State
   const [isVictoryOpen, setIsVictoryOpen] = useState<boolean>(false);
   const [finishStats, setFinishStats] = useState<{
@@ -587,6 +626,22 @@ export default function BitgeistArena({
   useEffect(() => {
     segmentCreatorStepRef.current = segmentCreatorStep;
   }, [segmentCreatorStep]);
+
+  useEffect(() => {
+    relayModeEnabledRef.current = relayModeEnabled;
+  }, [relayModeEnabled]);
+
+  useEffect(() => {
+    relayLegIndexRef.current = relayLegIndex;
+  }, [relayLegIndex]);
+
+  useEffect(() => {
+    replayPausedRef.current = replayPaused;
+  }, [replayPaused]);
+
+  useEffect(() => {
+    replaySpeedRef.current = replaySpeed;
+  }, [replaySpeed]);
 
   const helpButtonRef = useRef<HTMLButtonElement | null>(null);
   const helpPanelRef = useRef<HTMLElement | null>(null);
@@ -1172,9 +1227,20 @@ export default function BitgeistArena({
           targetGhost: GhostRun | null;
           leaderboard?: GhostRun[];
           totalRuns?: number;
+          communitySegments?: CustomRomSegment[];
         };
         if (typeof forBootSeq === 'number' && bootSeqRef.current !== forBootSeq) {
           return;
+        }
+
+        if (
+          Array.isArray(data.communitySegments) &&
+          data.communitySegments.length > 0 &&
+          profile.romId !== CELESTE_ROM_ID &&
+          customSegmentsRef.current.length === 0
+        ) {
+          customSegmentsRef.current = data.communitySegments;
+          setCustomSegments(data.communitySegments);
         }
 
         let nextTop = data.targetGhost;
@@ -1393,6 +1459,13 @@ export default function BitgeistArena({
       releaseAllVirtualButtons();
       pendingResetRequestRef.current = null;
       replayFrameMasksRef.current = null;
+      setIsManualReplayActive(false);
+      setReplayPaused(false);
+      if (opts.romBytes) {
+        activeRomBytesRef.current = opts.romBytes;
+      } else if (findBuiltinCartridgeByRomId(opts.romId)) {
+        activeRomBytesRef.current = null;
+      }
       emulatedCoreFrameRef.current = 0;
       pausedCoreFramesRef.current = 0;
       lastObservedCoreFrameRef.current = 0;
@@ -2493,6 +2566,13 @@ export default function BitgeistArena({
           replayFrameMasksRef.current = replayMasks;
           liveStateRef.current.isReplayingInputs = isReplay;
           liveStateRef.current.isAttractReplay = isAttract;
+          setIsManualReplayActive(Boolean(isReplay && !isAttract));
+          setReplayPaused(false);
+          setReplaySpeed(1);
+          setReplayProgress({
+            frame: 0,
+            total: replayMasks ? replayMasks.length : 0,
+          });
           liveStateRef.current.attractGhostId = attractCand ? attractCand.ghost.id : null;
           liveStateRef.current.attractGhostTag = attractCand ? attractCand.ghost.tag : null;
           liveStateRef.current.attractGhostTimeMs = attractCand ? attractCand.ghost.timeMs : null;
@@ -2774,6 +2854,10 @@ export default function BitgeistArena({
     if (!finishStats.inputLog) return;
     const masks = expandInputLogToFrameMasks(finishStats.inputLog);
     if (!masks || masks.length === 0) return;
+    isAttractModeRef.current = false;
+    setIsAttractMode(false);
+    setIsManualReplayActive(true);
+    setReplayProgress({ frame: 0, total: masks.length });
     void resetToStartingLine(true, { replayMasks: masks });
   }, [finishStats.inputLog, resetToStartingLine]);
 
@@ -2782,10 +2866,228 @@ export default function BitgeistArena({
       if (!ghost.inputLog || !checkpointBlobRef.current) return;
       const masks = expandInputLogToFrameMasks(ghost.inputLog);
       if (!masks || masks.length === 0) return;
+      isAttractModeRef.current = false;
+      setIsAttractMode(false);
+      setIsManualReplayActive(true);
+      setReplayProgress({ frame: 0, total: masks.length });
       void resetToStartingLine(true, { replayMasks: masks });
     },
     [resetToStartingLine]
   );
+
+  // Stage 6: 10-Ghost Swarm Toggle
+  const handleToggleSwarm = useCallback(() => {
+    setSwarmEnabled((prev) => !prev);
+  }, []);
+
+  // Stage 8: Interactive Replay Studio Controls (Pause, Speed, +1F Step, & Instant Takeover)
+  const handleToggleReplayPause = useCallback(() => {
+    const inst = nostalgistRef.current;
+    if (!inst || !liveStateRef.current.isReplayingInputs || liveStateRef.current.isAttractReplay) {
+      return;
+    }
+    const next = !replayPausedRef.current;
+    replayPausedRef.current = next;
+    setReplayPaused(next);
+    if (next) {
+      inst.pause();
+    } else {
+      resetTickClockRef.current = true;
+      inst.resume();
+    }
+  }, []);
+
+  const handleCycleReplaySpeed = useCallback(() => {
+    const cur = replaySpeedRef.current;
+    const next: ReplaySpeed = cur === 1 ? 0.5 : cur === 0.5 ? 0.25 : 1;
+    replaySpeedRef.current = next;
+    setReplaySpeed(next);
+  }, []);
+
+  const handleStepReplayFrame = useCallback(() => {
+    const inst = nostalgistRef.current;
+    if (!inst || !liveStateRef.current.isReplayingInputs || liveStateRef.current.isAttractReplay) {
+      return;
+    }
+    if (!replayPausedRef.current) {
+      replayPausedRef.current = true;
+      setReplayPaused(true);
+      inst.pause();
+    }
+    const masks = replayFrameMasksRef.current;
+    const nextF = Math.round(liveStateRef.current.raceFrame) + 1;
+    if (masks && nextF < masks.length) {
+      const mask = masks[nextF] ?? 0;
+      lastAppliedReplayMaskRef.current = mask;
+      heldReplayButtonsRef.current.clear();
+      for (const [bit, btnName] of NES_MASK_BUTTON_ENTRIES) {
+        if ((mask & bit) !== 0) {
+          heldReplayButtonsRef.current.add(btnName);
+        }
+      }
+      syncEffectiveVirtualButtons();
+    }
+    inst.resume();
+    setTimeout(() => {
+      if (nostalgistRef.current === inst && replayPausedRef.current) {
+        inst.pause();
+        const curF = Math.round(liveStateRef.current.raceFrame);
+        setReplayProgress({
+          frame: curF,
+          total: replayFrameMasksRef.current?.length ?? 0,
+        });
+      }
+    }, 17);
+  }, [syncEffectiveVirtualButtons]);
+
+  const handleTakeoverFromReplay = useCallback(() => {
+    const inst = nostalgistRef.current;
+    if (!inst || !liveStateRef.current.isReplayingInputs || liveStateRef.current.isAttractReplay) {
+      return;
+    }
+    liveStateRef.current.isReplayingInputs = false;
+    replayFrameMasksRef.current = null;
+    replayPausedRef.current = false;
+    setReplayPaused(false);
+    setReplaySpeed(1);
+    replaySpeedRef.current = 1;
+    setIsManualReplayActive(false);
+    heldReplayButtonsRef.current.clear();
+    lastAppliedReplayMaskRef.current = -1;
+    syncEffectiveVirtualButtons();
+    resetTickClockRef.current = true;
+    if (inst.getStatus() === 'paused') {
+      inst.resume();
+    }
+  }, [syncEffectiveVirtualButtons]);
+
+  // Stage 10: Live Multi-Runner Party Heat Lobby Coordinator
+  const handleJoinPartyLobby = useCallback(
+    async (explicitCode?: string) => {
+      try {
+        const res = await fetch('/api/lobby', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'join',
+            roomCode: explicitCode ?? partyCodeInput,
+            runnerId: selfRunnerId,
+            tag: playerTagRef.current,
+            sprintId: profileRef.current.sprintId,
+            romId: profileRef.current.romId,
+            worldX: liveStateRef.current.playerWorldX,
+            worldY: liveStateRef.current.playerWorldY,
+            raceFrame: Math.round(liveStateRef.current.raceFrame),
+            status: liveStateRef.current.raceStatus,
+          }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { lobby?: LivePartyLobbyState | null };
+        if (data.lobby) {
+          setPartyLobby(data.lobby);
+          setPartyCodeInput(data.lobby.roomCode);
+        }
+      } catch {
+        // non-fatal
+      }
+    },
+    [partyCodeInput, selfRunnerId]
+  );
+
+  const handleLeavePartyLobby = useCallback(async () => {
+    if (!partyLobby) return;
+    const code = partyLobby.roomCode;
+    setPartyLobby(null);
+    lastTriggeredLobbyCountdownRef.current = null;
+    try {
+      await fetch('/api/lobby', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'leave',
+          roomCode: code,
+          runnerId: selfRunnerId,
+        }),
+      });
+    } catch {
+      // non-fatal
+    }
+  }, [partyLobby, selfRunnerId]);
+
+  const handleStartPartyCountdown = useCallback(async () => {
+    if (!partyLobby) return;
+    try {
+      const res = await fetch('/api/lobby', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'startCountdown',
+          roomCode: partyLobby.roomCode,
+          runnerId: selfRunnerId,
+          tag: playerTagRef.current,
+          sprintId: profileRef.current.sprintId,
+          romId: profileRef.current.romId,
+        }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { lobby?: LivePartyLobbyState | null };
+      if (data.lobby) {
+        setPartyLobby(data.lobby);
+      }
+    } catch {
+      // non-fatal
+    }
+  }, [partyLobby, selfRunnerId]);
+
+  useEffect(() => {
+    if (!partyLobby) return;
+    let active = true;
+    const roomCode = partyLobby.roomCode;
+    const timer = setInterval(async () => {
+      if (!active) return;
+      try {
+        const res = await fetch('/api/lobby', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'heartbeat',
+            roomCode,
+            runnerId: selfRunnerId,
+            tag: playerTagRef.current,
+            sprintId: profileRef.current.sprintId,
+            romId: profileRef.current.romId,
+            worldX: liveStateRef.current.playerWorldX,
+            worldY: liveStateRef.current.playerWorldY,
+            raceFrame: Math.round(liveStateRef.current.raceFrame),
+            status: liveStateRef.current.raceStatus,
+          }),
+        });
+        if (!res.ok || !active) return;
+        const data = (await res.json()) as {
+          lobby?: LivePartyLobbyState | null;
+          serverNowMs?: number;
+        };
+        if (data.lobby) {
+          setPartyLobby(data.lobby);
+          const cdAt = data.lobby.countdownStartAtMs;
+          if (
+            typeof cdAt === 'number' &&
+            lastTriggeredLobbyCountdownRef.current !== cdAt &&
+            cdAt > (data.serverNowMs ?? Date.now()) - 3000
+          ) {
+            lastTriggeredLobbyCountdownRef.current = cdAt;
+            void resetToStartingLine(false, { startCountdown: true, preserveHeldInputs: true });
+          }
+        }
+      } catch {
+        // ignore network hiccup
+      }
+    }, 350);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [partyLobby, resetToStartingLine, selfRunnerId]);
 
   const bootProfileForBuiltinSlot = useCallback(
     (romId: string, courseIndex: number, isDaily: boolean): RomProfile => {
@@ -2802,6 +3104,17 @@ export default function BitgeistArena({
     },
     []
   );
+
+  // Stage 7: 3-Room Daily Trifecta Relay Toggle
+  const handleToggleRelayMode = useCallback(() => {
+    const next = !relayModeEnabledRef.current;
+    relayModeEnabledRef.current = next;
+    setRelayModeEnabled(next);
+    relayLegIndexRef.current = 0;
+    setRelayLegIndex(0);
+    relayLegTimesRef.current = [];
+    setCompletedRelayLegsMs(null);
+  }, []);
 
   const handleStepCelesteLevel = useCallback(
     (direction: -1 | 1) => {
@@ -3120,6 +3433,8 @@ export default function BitgeistArena({
             }
             st.isReplayingInputs = false;
             replayFrameMasksRef.current = null;
+            setIsManualReplayActive(false);
+            setReplayPaused(false);
             releaseAllVirtualButtons();
             instance.pause();
             st.raceStatus = 'won';
@@ -3349,6 +3664,8 @@ export default function BitgeistArena({
             instance.pause();
 
             if (wasReplay) {
+              setIsManualReplayActive(false);
+              setReplayPaused(false);
               clearPendingFinishModal();
               crtTransitionRef.current?.playFinishSequence({
                 focusX: finishFocusX,
@@ -3364,6 +3681,39 @@ export default function BitgeistArena({
               }, 2600);
               rafId = requestAnimationFrame(tick);
               return;
+            }
+
+            const legElapsedMs = Math.max(1000, Math.round(raceElapsedMsRef.current));
+
+            // Stage 7: 3-Room Daily Trifecta Relay Chaining (Legs 1/3 -> 2/3 -> 3/3)
+            const builtinSpec = findBuiltinCartridgeByRomId(profile.romId);
+            if (relayModeEnabledRef.current && builtinSpec && relayLegIndexRef.current < 2) {
+              const nextLegIdx = relayLegIndexRef.current + 1;
+              relayLegTimesRef.current = [...relayLegTimesRef.current, legElapsedMs];
+              relayLegIndexRef.current = nextLegIdx;
+              setRelayLegIndex(nextLegIdx);
+              playSplitCheckpointSfx(true);
+              const nextCourseIdx = ((profile.courseIndex ?? 0) + 1) % 6;
+              const nextProf = bootProfileForBuiltinSlot(builtinSpec.romId, nextCourseIdx, false);
+              void bootCartridge({
+                romId: builtinSpec.romId,
+                fileName: builtinSpec.fileName,
+                romSource: builtinSpec.romUrl,
+                consoleSystem: builtinSpec.consoleSystem,
+                profileOverride: nextProf,
+              });
+              rafId = requestAnimationFrame(tick);
+              return;
+            }
+
+            if (relayModeEnabledRef.current && relayLegTimesRef.current.length === 2) {
+              const all3Legs = [...relayLegTimesRef.current, legElapsedMs];
+              setCompletedRelayLegsMs(all3Legs);
+              relayLegTimesRef.current = [];
+              relayLegIndexRef.current = 0;
+              setRelayLegIndex(0);
+            } else {
+              setCompletedRelayLegsMs(null);
             }
 
             inputRecorderRef.current.recordUpToFrame(intFrame, finalLiveMask);
@@ -3517,6 +3867,8 @@ export default function BitgeistArena({
                 startWorldX: profile.startWorldX,
                 goalWorldX: profile.goalWorldX,
                 inputLog: serializedInputLog,
+                parentSlug: getEffectiveDareSlugForProfile(profile),
+                rivalTag: rival?.tag,
               }),
             })
               .then(async (res) => {
@@ -3525,10 +3877,12 @@ export default function BitgeistArena({
                     run?: GhostRun;
                     identity?: ArcadeIdentityInfo;
                     tagConflict?: boolean;
+                    rivalrySeries?: RivalrySeriesSummary;
                   };
                   if (payload.identity) {
                     setIdentityInfo(payload.identity);
                   }
+                  setRivalrySeries(payload.rivalrySeries ?? null);
                   if (payload.tagConflict && payload.run?.tag) {
                     handleUpdateTag(payload.run.tag);
                     setTagConflictMessage(
@@ -3579,6 +3933,12 @@ export default function BitgeistArena({
             const span = Math.max(1, profile.goalWorldX - profile.startWorldX);
             const ratio = Math.max(0, Math.min(1, (st.playerWorldX - profile.startWorldX) / span));
             setActiveSegments(Math.max(1, Math.min(10, Math.ceil(ratio * 10))));
+            if (st.isReplayingInputs && !st.isAttractReplay && replayFrameMasksRef.current) {
+              setReplayProgress({
+                frame: intFrame,
+                total: replayFrameMasksRef.current.length,
+              });
+            }
 
             const rival = targetGhostRef.current;
             const rivalAhead =
@@ -3612,6 +3972,8 @@ export default function BitgeistArena({
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, [
+    bootCartridge,
+    bootProfileForBuiltinSlot,
     clearPendingFinishModal,
     fetchGhostsForProfile,
     getCurrentLiveInputMask,
@@ -3871,6 +4233,18 @@ export default function BitgeistArena({
       saveCustomSprintBoundsToVault(curProf.romId, bounds),
     ]);
 
+    // Stage 9: Index zero-ROM custom segment bounds in Community Segment Directory
+    void fetch('/api/ghosts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'saveSegment',
+        segment: newSeg,
+      }),
+    }).catch(() => {
+      // non-fatal
+    });
+
     const updatedSegments = await listCustomSegmentsForRom(curProf.romId);
     customSegmentsRef.current = updatedSegments;
     setCustomSegments(updatedSegments);
@@ -4037,9 +4411,13 @@ export default function BitgeistArena({
         return;
       }
 
-      // Prevent live keyboard keys from perturbing manual post-race deterministic input replay
+      // Prevent live keyboard keys from perturbing manual post-race deterministic input replay,
+      // except [Space] which triggers Stage 8 "Take Over From This Frame" practice mode!
       if (liveStateRef.current.isReplayingInputs) {
         e.stopPropagation();
+        if (e.code === 'Space' && !e.repeat) {
+          handleTakeoverFromReplay();
+        }
         return;
       }
 
@@ -4136,6 +4514,7 @@ export default function BitgeistArena({
     handleCancelSegmentCreator,
     handleManualRetry,
     handleStepCelesteLevel,
+    handleTakeoverFromReplay,
     handleToggleMusicMute,
     releaseAllVirtualButtons,
     resetToStartingLine,
@@ -4144,10 +4523,45 @@ export default function BitgeistArena({
     syncEffectiveVirtualButtons,
   ]);
 
-  // Drag-and-Drop Multi-Console ROM Cartridge Anywhere on Window
+  // Drag-and-Drop Multi-Console ROM Cartridge or .IPS / .BPS Patch Anywhere on Window
   const handleDropRomFile = useCallback(
     async (file: File) => {
       setDropError(null);
+      if (detectRomPatchFormat(file.name)) {
+        let baseBytes = activeRomBytesRef.current;
+        if (!baseBytes) {
+          const curVault = await getRomFromVault(profileRef.current.romId);
+          if (curVault?.bytes) {
+            baseBytes = curVault.bytes;
+          } else {
+            const builtin =
+              findBuiltinCartridgeByRomId(profileRef.current.romId) ?? HOMEBREW_CARTRIDGES[0];
+            const res = await fetch(builtin.romUrl);
+            if (!res.ok) {
+              throw new Error('Could not load base cartridge for .IPS/.BPS patch.');
+            }
+            baseBytes = new Uint8Array(await res.arrayBuffer());
+          }
+        }
+        const patched = await savePatchedRomToVault(
+          baseBytes,
+          profileRef.current.title,
+          profileRef.current.consoleSystem,
+          file
+        );
+        const updatedList = await listVaultRoms();
+        setVaultRoms(updatedList);
+        setMissingDareCartTitle(null);
+        setIsRomModalOpen(false);
+        await bootCartridge({
+          romId: patched.romId,
+          fileName: patched.fileName,
+          romSource: storedEntryToBlob(patched),
+          romBytes: patched.bytes,
+          consoleSystem: patched.consoleSystem,
+        });
+        return;
+      }
       const saved = await saveRomToVault(file);
       const updatedList = await listVaultRoms();
       setVaultRoms(updatedList);
@@ -4506,6 +4920,64 @@ export default function BitgeistArena({
                     Finish a run to download a 15s video clip or share a 1-click challenge link.
                   </div>
                 </div>
+
+                {/* Stage 10: Live Party Room Heat Controls */}
+                <div className="bg-[#E8F9F0] border-2 border-[#111111] rounded-xl px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="font-black uppercase whitespace-nowrap text-[10px]">
+                      📡 LIVE PARTY HEAT
+                    </span>
+                    {partyLobby && (
+                      <span className="bg-[#111111] text-[#FFE74C] rounded px-1.5 py-0.5 text-[9px] font-black uppercase">
+                        {partyLobby.roomCode} • {partyLobby.runners.length}P
+                      </span>
+                    )}
+                  </div>
+                  {partyLobby ? (
+                    <div className="flex items-center gap-1 mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleStartPartyCountdown()}
+                        className="flex-1 bg-[#FFE74C] hover:bg-[#FFD919] text-[#111111] border-[1.5px] border-[#111111] rounded px-1.5 py-1 text-[9.5px] font-black uppercase cursor-pointer"
+                      >
+                        🚦 SYNC 3-2-1 GO
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleLeavePartyLobby()}
+                        className="bg-[#EAE2C8] hover:bg-[#EC6553] hover:text-white text-[#111111] border-[1.5px] border-[#111111] rounded px-1.5 py-1 text-[9.5px] font-black uppercase cursor-pointer"
+                      >
+                        LEAVE
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 mt-1.5">
+                      <input
+                        type="text"
+                        value={partyCodeInput}
+                        onChange={(e) =>
+                          setPartyCodeInput(
+                            e.target.value
+                              .toUpperCase()
+                              .replace(/[^A-Z0-9]/g, '')
+                              .slice(0, 4)
+                          )
+                        }
+                        placeholder="CODE"
+                        maxLength={4}
+                        aria-label="4-letter Party Room Code"
+                        className="w-[54px] h-[24px] px-1.5 rounded bg-[#FFFDF7] border-[1.5px] border-[#111111] text-[10px] font-black uppercase text-center"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleJoinPartyLobby()}
+                        className="flex-1 h-[24px] bg-[#7FD1AE] hover:bg-[#95E0BE] text-[#111111] border-[1.5px] border-[#111111] rounded px-2 text-[9.5px] font-black uppercase cursor-pointer"
+                      >
+                        {partyCodeInput.trim().length >= 3 ? 'JOIN ROOM' : 'HOST ROOM'}
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </section>
           )}
@@ -4580,6 +5052,8 @@ export default function BitgeistArena({
               customSegments={customSegments}
               segmentCreatorStep={segmentCreatorStep}
               segmentDraftDistancePx={segmentDraftDistancePx}
+              relayModeEnabled={relayModeEnabled}
+              relayLegIndex={relayLegIndex}
               layout="horizontal"
               onSelectDaily={handleSelectDailyChallenge}
               onSelectCourse={handleSelectCourse}
@@ -4590,6 +5064,7 @@ export default function BitgeistArena({
               onConfirmSegmentFinish={() => void handleConfirmSegmentFinish()}
               onCancelSegmentCreator={handleCancelSegmentCreator}
               onStepLevel={handleStepCelesteLevel}
+              onToggleRelayMode={handleToggleRelayMode}
             />
             <LeaderboardDrawer
               stageLabel={activeProfile.stageLabel}
@@ -4599,6 +5074,7 @@ export default function BitgeistArena({
               localPbGhost={localPbGhost}
               localPbMs={activeLocalPbMs}
               rivalMode={rivalMode}
+              swarmEnabled={swarmEnabled}
               playerTag={playerTag}
               identityInfo={identityInfo}
               layout="horizontal"
@@ -4606,6 +5082,7 @@ export default function BitgeistArena({
               onSelectMyPb={handleSelectMyPb}
               onSelectCustomRival={handleSelectCustomRival}
               onWatchGhostReplay={handleWatchGhostReplay}
+              onToggleSwarm={handleToggleSwarm}
               onRestoreClaimKey={handleRestoreClaimKey}
             />
           </>
@@ -4739,15 +5216,75 @@ export default function BitgeistArena({
                         style={{ imageRendering: 'pixelated' }}
                       />
 
-                      {/* Transparent 60 FPS World-Space 1v1 #1 / PB Ghost Overlay */}
+                      {/* Transparent 60 FPS World-Space 1v1 #1 / PB / Top-10 Swarm / Party Ghost Overlay */}
                       <GhostCanvasOverlay
                         targetGhost={segmentCreatorStep === 'idle' ? targetGhost : null}
+                        swarmGhosts={leaderboardRuns}
+                        swarmEnabled={swarmEnabled}
+                        partyRunners={partyLobby?.runners ?? []}
+                        selfRunnerId={selfRunnerId}
                         liveStateRef={liveStateRef}
                         overlayCanvasRef={ghostOverlayCanvasRef}
                       />
 
                       {/* 8-Bit NES-Grid CRT Run Start & Finish Transitions (Diagonal Tile Shutter, Spotlight Iris & Finish Letterbox) */}
                       <CrtTransitionOverlay transitionRef={crtTransitionRef} />
+
+                      {/* Stage 8: Interactive Replay Studio & Instant Takeover Bar (Inside CRT Screen) */}
+                      {isManualReplayActive &&
+                        !isAttractMode &&
+                        raceStatus !== 'booting' &&
+                        raceStatus !== 'error' && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label="Replay Studio Controls"
+                            className="absolute inset-x-2.5 bottom-2 z-[26] bg-[#111111]/92 border-2 border-[#FFE74C] rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 shadow-[3px_3px_0px_#111111]"
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="bg-[#EC6553] text-white rounded px-1.5 py-0.5 text-[8.5px] font-black uppercase leading-none shrink-0">
+                                REPLAY STUDIO
+                              </span>
+                              <span className="text-[9.5px] font-black tabular-nums text-[#FFE74C] truncate">
+                                F{String(replayProgress.frame).padStart(4, '0')}/
+                                {String(replayProgress.total).padStart(4, '0')}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={handleToggleReplayPause}
+                                className="h-[21px] px-1.5 rounded bg-[#FFFDF7] hover:bg-[#FFE74C] text-[#111111] border border-[#111111] text-[9px] font-black uppercase leading-none cursor-pointer"
+                              >
+                                {replayPaused ? '▶ PLAY' : '⏸ PAUSE'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleStepReplayFrame}
+                                className="h-[21px] px-1.5 rounded bg-[#EAE2C8] hover:bg-[#FFE74C] text-[#111111] border border-[#111111] text-[9px] font-black uppercase leading-none cursor-pointer"
+                                title="Advance 1 deterministic frame"
+                              >
+                                +1F
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCycleReplaySpeed}
+                                className="h-[21px] px-1.5 rounded bg-[#FFE74C] hover:bg-[#FFD919] text-[#111111] border border-[#111111] text-[9px] font-black uppercase leading-none cursor-pointer"
+                                title="Cycle replay speed (1x / 0.5x / 0.25x)"
+                              >
+                                {replaySpeed}X
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleTakeoverFromReplay}
+                                className="h-[21px] px-2 rounded bg-[#7FD1AE] hover:bg-[#95E0BE] text-[#111111] border border-[#111111] text-[9px] font-black uppercase leading-none cursor-pointer"
+                                title="Take live control from this exact frame"
+                              >
+                                ⚡ TAKE OVER
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                       {/* Non-Interactive Guidance Strip While Marking Custom Start -> Finish Bounds (Single Action Lives in PICK A SEGMENT) */}
                       {segmentCreatorStep !== 'idle' && (
@@ -4892,6 +5429,8 @@ export default function BitgeistArena({
                   customSegments={customSegments}
                   segmentCreatorStep={segmentCreatorStep}
                   segmentDraftDistancePx={segmentDraftDistancePx}
+                  relayModeEnabled={relayModeEnabled}
+                  relayLegIndex={relayLegIndex}
                   layout="vertical"
                   onSelectDaily={handleSelectDailyChallenge}
                   onSelectCourse={handleSelectCourse}
@@ -4902,6 +5441,7 @@ export default function BitgeistArena({
                   onConfirmSegmentFinish={() => void handleConfirmSegmentFinish()}
                   onCancelSegmentCreator={handleCancelSegmentCreator}
                   onStepLevel={handleStepCelesteLevel}
+                  onToggleRelayMode={handleToggleRelayMode}
                 />
                 <LeaderboardDrawer
                   stageLabel={activeProfile.stageLabel}
@@ -4911,6 +5451,7 @@ export default function BitgeistArena({
                   localPbGhost={localPbGhost}
                   localPbMs={activeLocalPbMs}
                   rivalMode={rivalMode}
+                  swarmEnabled={swarmEnabled}
                   playerTag={playerTag}
                   identityInfo={identityInfo}
                   layout="vertical"
@@ -4918,6 +5459,7 @@ export default function BitgeistArena({
                   onSelectMyPb={handleSelectMyPb}
                   onSelectCustomRival={handleSelectCustomRival}
                   onWatchGhostReplay={handleWatchGhostReplay}
+                  onToggleSwarm={handleToggleSwarm}
                   onRestoreClaimKey={handleRestoreClaimKey}
                 />
               </div>
@@ -4990,6 +5532,10 @@ export default function BitgeistArena({
         inputLog={finishStats.inputLog}
         verified={finishStats.verified}
         isDare={Boolean(activeEffectiveDareSlug)}
+        parentSlug={activeEffectiveDareSlug}
+        rivalrySeries={rivalrySeries}
+        relayLegTimesMs={completedRelayLegsMs}
+        pbGhost={localPbGhost}
         targetGhost={finishStats.racedTargetGhost}
         playerTag={playerTag}
         replayClip={latestReplayClip}
