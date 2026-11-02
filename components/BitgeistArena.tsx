@@ -930,7 +930,7 @@ export default function BitgeistArena({
           focusX,
           focusY,
           accentColor: '#F5C342',
-          durationMs: 680,
+          durationMs: 1350,
         });
       }
 
@@ -1013,7 +1013,7 @@ export default function BitgeistArena({
             videoRecorderRef.current.startRecording();
           }
           inst.resume();
-          crtTransitionRef.current?.playGoLaunchBurst({ durationMs: 460 });
+          crtTransitionRef.current?.playGoLaunchBurst({ durationMs: 720 });
           playRaceStartSfx();
           gamepadPollerRef.current.pulseRumble('start');
           setCountdownDisplay('GO!');
@@ -1022,7 +1022,7 @@ export default function BitgeistArena({
             if (countdownSeqRef.current === seq) {
               setCountdownDisplay(null);
             }
-          }, 520);
+          }, 680);
           countdownTimersRef.current.push(tClear);
         }, leadInMs + STEP_MS * 3)
       );
@@ -1497,10 +1497,10 @@ export default function BitgeistArena({
           if (!crtTransitionRef.current?.isCurtainClosed()) {
             await crtTransitionRef.current?.playShutterClose({
               accentColor: '#F5C342',
-              durationMs: 380,
+              durationMs: 880,
             });
             if (isStale()) return;
-            await new Promise((r) => setTimeout(r, 60));
+            await new Promise((r) => setTimeout(r, 180));
             if (isStale()) return;
           }
           setCoreVolumeDb(existingInstance, -80);
@@ -1549,12 +1549,12 @@ export default function BitgeistArena({
               Math.round(liveStateRef.current.playerWorldY - (liveStateRef.current.cameraY || 0) - 8)
             )
           );
-          irisOpenUntilMsRef.current = performance.now() + 680;
+          irisOpenUntilMsRef.current = performance.now() + 1350;
           crtTransitionRef.current?.playIrisOpen({
             focusX,
             focusY,
             accentColor: '#F5C342',
-            durationMs: 680,
+            durationMs: 1350,
           });
 
           if (awaitingAutoAttractForBootSeqRef.current === seq && !isRomModalOpenRef.current) {
@@ -1564,7 +1564,7 @@ export default function BitgeistArena({
               effectiveDareSlug
             );
             if (cand) {
-              startAttractFromPoisedStart(cand, 680);
+              startAttractFromPoisedStart(cand, 1350);
             }
           }
           return;
@@ -1738,12 +1738,12 @@ export default function BitgeistArena({
               )
             )
           );
-          irisOpenUntilMsRef.current = performance.now() + 680;
+          irisOpenUntilMsRef.current = performance.now() + 1350;
           crtTransitionRef.current?.playIrisOpen({
             focusX: cachedFocusX,
             focusY: cachedFocusY,
             accentColor: '#F5C342',
-            durationMs: 680,
+            durationMs: 1350,
           });
           if (awaitingAutoAttractForBootSeqRef.current === seq && !isRomModalOpenRef.current) {
             const cand = pickAttractReplayCandidate(
@@ -1752,7 +1752,7 @@ export default function BitgeistArena({
               effectiveDareSlug
             );
             if (cand) {
-              startAttractFromPoisedStart(cand, 680);
+              startAttractFromPoisedStart(cand, 1350);
             }
           }
           return;
@@ -2117,12 +2117,12 @@ export default function BitgeistArena({
               )
             )
           );
-          irisOpenUntilMsRef.current = performance.now() + 720;
+          irisOpenUntilMsRef.current = performance.now() + 1400;
           crtTransitionRef.current?.playIrisOpen({
             focusX: bootFocusX,
             focusY: bootFocusY,
             accentColor: '#F5C342',
-            durationMs: 720,
+            durationMs: 1400,
           });
           if (awaitingAutoAttractForBootSeqRef.current === seq && !isRomModalOpenRef.current) {
             const cand = pickAttractReplayCandidate(
@@ -2131,7 +2131,7 @@ export default function BitgeistArena({
               effectiveDareSlug
             );
             if (cand) {
-              startAttractFromPoisedStart(cand, 720);
+              startAttractFromPoisedStart(cand, 1400);
             }
           }
         } else {
@@ -2154,7 +2154,7 @@ export default function BitgeistArena({
             focusX: 128,
             focusY: 120,
             accentColor: '#7FD1AE',
-            durationMs: 660,
+            durationMs: 1250,
           });
         }
       } catch (err) {
@@ -2480,11 +2480,11 @@ export default function BitgeistArena({
             }
             await crtTransitionRef.current?.playShutterClose({
               accentColor: wipeAccent,
-              durationMs: curOpts?.withDeathFlash ? 360 : 420,
+              durationMs: curOpts?.withDeathFlash ? 820 : 920,
             });
             if (isStaleReset()) return;
             if (!pendingResetRequestRef.current && !curAutoResume) {
-              await new Promise((r) => setTimeout(r, 65));
+              await new Promise((r) => setTimeout(r, 200));
               if (isStaleReset()) return;
             }
           }
@@ -2557,7 +2557,7 @@ export default function BitgeistArena({
               focusX: 128,
               focusY: 120,
               accentColor: '#7FD1AE',
-              durationMs: 660,
+              durationMs: 1250,
             });
             break;
           }
@@ -2647,12 +2647,12 @@ export default function BitgeistArena({
           if (userAudioUnlockedRef.current && !isAttract) {
             playScreenWipeSfx('open');
           }
-          irisOpenUntilMsRef.current = performance.now() + 680;
+          irisOpenUntilMsRef.current = performance.now() + 1350;
           crtTransitionRef.current?.playIrisOpen({
             focusX: startFocusX,
             focusY: startFocusY,
             accentColor: isAttract ? '#7FD1AE' : '#F5C342',
-            durationMs: 680,
+            durationMs: 1350,
           });
 
           liveStateRef.current.isReplayingInputs = isReplay;
@@ -2692,8 +2692,8 @@ export default function BitgeistArena({
             }
           } else if (curOpts?.startCountdown) {
             videoRecorderRef.current.discard();
-            // Let the 680ms spotlight iris open deliberately around the runner before striking beat "3" for its full 900ms
-            beginPreRaceCountdown({ initialDelayMs: 520, openIris: false });
+            // Let the 1350ms spotlight iris frame the runner and sweep outward for 1050ms before striking beat "3" for its full 900ms
+            beginPreRaceCountdown({ initialDelayMs: 1050, openIris: false });
           } else {
             videoRecorderRef.current.discard();
             clearPendingFinishModal();
@@ -2747,7 +2747,7 @@ export default function BitgeistArena({
     if (liveStateRef.current.raceStatus === 'waiting') {
       const curtainClosed = crtTransitionRef.current?.isCurtainClosed() ?? false;
       beginPreRaceCountdown({
-        initialDelayMs: curtainClosed ? 520 : 0,
+        initialDelayMs: curtainClosed ? 1050 : 0,
         openIris: curtainClosed,
       });
     }
@@ -3325,7 +3325,7 @@ export default function BitgeistArena({
                 focusY: finishFocusY,
                 beatTarget: true,
                 closeCurtainAtEnd: false,
-                totalMs: 1450,
+                totalMs: 2100,
               });
               attractLoopTimeoutRef.current = setTimeout(() => {
                 attractLoopTimeoutRef.current = null;
@@ -3334,7 +3334,7 @@ export default function BitgeistArena({
                     attractCandidate: activeAttractCandidateRef.current,
                   });
                 }
-              }, 1420);
+              }, 2050);
               rafId = requestAnimationFrame(tick);
               return;
             }
@@ -3355,13 +3355,13 @@ export default function BitgeistArena({
                 focusY: finishFocusY,
                 beatTarget: true,
                 closeCurtainAtEnd: true,
-                totalMs: 1750,
-                closeDurationMs: 760,
+                totalMs: 2600,
+                closeDurationMs: 1250,
               });
               finishModalTimeoutRef.current = setTimeout(() => {
                 finishModalTimeoutRef.current = null;
                 setIsVictoryOpen(true);
-              }, 1750);
+              }, 2600);
               rafId = requestAnimationFrame(tick);
               return;
             }
@@ -3483,8 +3483,8 @@ export default function BitgeistArena({
               focusY: finishFocusY,
               beatTarget,
               closeCurtainAtEnd: true,
-              totalMs: 2050,
-              closeDurationMs: 820,
+              totalMs: 3100,
+              closeDurationMs: 1450,
               onCloseStart: () => {
                 if (userAudioUnlockedRef.current) {
                   playScreenWipeSfx('close');
@@ -3494,7 +3494,7 @@ export default function BitgeistArena({
             finishModalTimeoutRef.current = setTimeout(() => {
               finishModalTimeoutRef.current = null;
               setIsVictoryOpen(true);
-            }, 2050);
+            }, 3100);
 
             // Persist ghost run + RLE inputLog to POST /api/ghosts for headless WASM anti-cheat & device tag claim
             void fetch('/api/ghosts', {
@@ -4255,10 +4255,10 @@ export default function BitgeistArena({
   const showDareBanner = Boolean(activeEffectiveDareSlug && targetGhost);
   const activeBuiltinCart = findBuiltinCartridgeByRomId(activeProfile.romId);
   const showSidePanels = vw >= 960;
-  const sideRailWidthPx = vw >= 1220 ? 190 : vw >= 1080 ? 180 : 172;
+  const sideRailWidthPx = vw >= 1220 ? 224 : vw >= 1080 ? 208 : 196;
   const sideRailGapPx = 12;
   const singleSideRailExtraPx = showSidePanels ? sideRailWidthPx + sideRailGapPx : 0;
-  const totalSideRailsExtraWidthPx = singleSideRailExtraPx * 2;
+  const totalSideRailsExtraWidthPx = singleSideRailExtraPx;
 
   const horizontalSegmentBannerExtraPx = !showSidePanels ? 98 + (vw < 540 ? 22 : 0) : 0;
   const horizontalTopTenBannerExtraPx = !showSidePanels ? 78 : 0;
@@ -4497,7 +4497,7 @@ export default function BitgeistArena({
                 <div className="bg-[#F7EED7] border-2 border-[#111111] rounded-xl px-2.5 py-2">
                   <div className="font-black uppercase whitespace-nowrap">2. BEAT THE #1 GHOST</div>
                   <div className="font-bold text-[#111111]/80 mt-0.5">
-                    Click any runner in TOP 10 on the left to race 1v1 (or ▶ to watch). Press any key or pad to race.
+                    Click any runner in TOP 10 on the right to race 1v1 (or ▶ to watch). Press any key or pad to race.
                   </div>
                 </div>
                 <div className="bg-[#F7EED7] border-2 border-[#111111] rounded-xl px-2.5 py-2">
@@ -4612,40 +4612,12 @@ export default function BitgeistArena({
         )}
 
         {/* ===================================================================== */}
-        {/* 2. WIDESCREEN CONSOLE RIG (TOP 10 | CRT SCREEN | PICK A SEGMENT)      */}
+        {/* 2. WIDESCREEN CONSOLE RIG (CRT SCREEN | PICK A SEGMENT + TOP 10)      */}
         {/* ===================================================================== */}
         <div
           className="w-full flex items-stretch"
           style={{ gap: showSidePanels ? `${sideRailGapPx}px` : undefined }}
         >
-          {/* Left-Docked Always-Visible Top-10 Leaderboard (Harmonized 1:1 With PICK A SEGMENT) */}
-          {showSidePanels && (
-            <div
-              className="relative shrink-0"
-              style={{ width: `${sideRailWidthPx}px` }}
-            >
-              <div className="absolute inset-0 flex flex-col justify-start">
-                <LeaderboardDrawer
-                  stageLabel={activeProfile.stageLabel}
-                  leaderboard={leaderboardRuns}
-                  totalRuns={leaderboardTotalRuns}
-                  activeTargetGhost={targetGhost}
-                  localPbGhost={localPbGhost}
-                  localPbMs={activeLocalPbMs}
-                  rivalMode={rivalMode}
-                  playerTag={playerTag}
-                  identityInfo={identityInfo}
-                  layout="vertical"
-                  onSelectTopRecord={handleSelectTopRecord}
-                  onSelectMyPb={handleSelectMyPb}
-                  onSelectCustomRival={handleSelectCustomRival}
-                  onWatchGhostReplay={handleWatchGhostReplay}
-                  onRestoreClaimKey={handleRestoreClaimKey}
-                />
-              </div>
-            </div>
-          )}
-
           <div className="flex-1 min-w-0 relative">
             <div className="crt-outer-coral">
               <div className="crt-outer-gold">
@@ -4905,13 +4877,13 @@ export default function BitgeistArena({
             </div>
           </div>
 
-          {/* Right-Docked Compact Vertical Segment Selector (Harmonized 1:1 With TOP 10) */}
+          {/* Right-Docked Unified Side Column: PICK A SEGMENT + Always-Visible TOP 10 */}
           {showSidePanels && (
             <div
               className="relative shrink-0"
               style={{ width: `${sideRailWidthPx}px` }}
             >
-              <div className="absolute inset-0 flex flex-col justify-start">
+              <div className="absolute inset-0 flex flex-col gap-2.5">
                 <SprintLevelCarousel
                   activeProfile={activeProfile}
                   isAttractMode={isAttractMode}
@@ -4931,19 +4903,35 @@ export default function BitgeistArena({
                   onCancelSegmentCreator={handleCancelSegmentCreator}
                   onStepLevel={handleStepCelesteLevel}
                 />
+                <LeaderboardDrawer
+                  stageLabel={activeProfile.stageLabel}
+                  leaderboard={leaderboardRuns}
+                  totalRuns={leaderboardTotalRuns}
+                  activeTargetGhost={targetGhost}
+                  localPbGhost={localPbGhost}
+                  localPbMs={activeLocalPbMs}
+                  rivalMode={rivalMode}
+                  playerTag={playerTag}
+                  identityInfo={identityInfo}
+                  layout="vertical"
+                  onSelectTopRecord={handleSelectTopRecord}
+                  onSelectMyPb={handleSelectMyPb}
+                  onSelectCustomRival={handleSelectCustomRival}
+                  onWatchGhostReplay={handleWatchGhostReplay}
+                  onRestoreClaimKey={handleRestoreClaimKey}
+                />
               </div>
             </div>
           )}
         </div>
 
         {/* ===================================================================== */}
-        {/* 3. HARMONIZED CONSOLE CONTROL DECK (CENTERED DIRECTLY UNDER CRT)      */}
+        {/* 3. HARMONIZED CONSOLE CONTROL DECK (FLUSH DIRECTLY UNDER CRT)         */}
         {/* ===================================================================== */}
         <div
           style={{
-            marginLeft: showSidePanels ? `${singleSideRailExtraPx}px` : undefined,
             width: showSidePanels
-              ? `calc(100% - ${totalSideRailsExtraWidthPx}px)`
+              ? `calc(100% - ${singleSideRailExtraPx}px)`
               : '100%',
           }}
         >

@@ -370,10 +370,10 @@ export default function SprintLevelCarousel({
       <nav
         aria-label="Speedrun Segment Selector"
         onMouseLeave={() => setHoveredSlotId(null)}
-        className="w-full max-h-full bg-[#EFE6CE] border-[3px] border-[#111111] rounded-2xl p-2 shadow-[inset_0_2px_0_#FFFDF7,inset_0_-3px_0_#D8CEB4,4px_5px_0px_#111111] flex flex-col gap-1.5"
+        className="flex-[44] min-h-0 w-full bg-[#EFE6CE] border-[3px] border-[#111111] rounded-2xl p-2 shadow-[inset_0_2px_0_#FFFDF7,inset_0_-3px_0_#D8CEB4,4px_5px_0px_#111111] flex flex-col gap-1"
       >
         {/* Top Rack Header: Clear Purpose + Tactile ◀ / ▶ Stepper Buttons */}
-        <div className="shrink-0 h-[23px] flex items-center justify-between gap-1.5 pb-1 border-b-2 border-[#111111]/15">
+        <div className="shrink-0 h-[21px] flex items-center justify-between gap-1.5 pb-1 border-b-2 border-[#111111]/15">
           <span className="text-[9px] font-black uppercase tracking-wider text-[#111111]/85 leading-none whitespace-nowrap">
             PICK A SEGMENT
           </span>
@@ -401,8 +401,8 @@ export default function SprintLevelCarousel({
 
         {/* Compact Segment Cards With Crisp Pixel-Art Preview Squares + Room Details */}
         <div
-          className="flex-1 min-h-0 grid gap-1"
-          style={{ gridTemplateRows: `repeat(${totalVerticalRows}, minmax(0, 51px))` }}
+          className="flex-1 min-h-0 grid gap-[3px]"
+          style={{ gridTemplateRows: `repeat(${totalVerticalRows}, minmax(0, 1fr))` }}
         >
           {slots.map((slot, idx) => {
             const isActive = idx === activeIdx;
@@ -421,21 +421,21 @@ export default function SprintLevelCarousel({
                   onFocus={() => setHoveredSlotId(slot.id)}
                   onBlur={() => setHoveredSlotId(null)}
                   onClick={() => handleSelectSlot(slot, isActive)}
-                  className={`h-full min-h-0 w-full rounded-xl border-2 border-[#111111] px-1.5 py-1 flex items-center gap-1.5 text-left cursor-pointer select-none focus:outline-none transition-all duration-100 ${
+                  className={`h-full min-h-0 w-full rounded-xl border-2 border-[#111111] px-1.5 py-0.5 flex items-center gap-1.5 text-left cursor-pointer select-none focus:outline-none transition-all duration-100 ${
                     isActive
-                      ? 'bg-[#FFE74C] shadow-[2.5px_2.5px_0px_#111111] -translate-x-[0.5px] -translate-y-[0.5px]'
+                      ? 'bg-[#FFE74C] shadow-[2px_2px_0px_#111111] -translate-x-[0.5px] -translate-y-[0.5px]'
                       : 'bg-[#FFFDF7] hover:bg-[#FFF7DC] shadow-[0_1.5px_0_#111111] hover:-translate-y-[0.5px] active:translate-y-[1px] active:shadow-none'
                   }`}
                 >
                   {/* Framed Mini-CRT Pixel-Art Preview Square */}
                   <div
-                    className={`h-[42px] max-h-full aspect-[16/15] shrink-0 rounded-[6px] border-[1.5px] border-[#111111] p-[1.5px] transition-colors ${
+                    className={`h-[26px] w-[28px] shrink-0 rounded-[5px] border-[1.5px] border-[#111111] p-[1px] transition-colors ${
                       isActive
                         ? 'bg-[#111111]'
                         : 'bg-[#EFE6CE] group-hover:bg-[#7FD1AE]'
                     }`}
                   >
-                    <div className="relative w-full h-full rounded-[4px] bg-[#000000] overflow-hidden">
+                    <div className="relative w-full h-full rounded-[3px] bg-[#000000] overflow-hidden">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={slot.previewSrc}
@@ -447,7 +447,7 @@ export default function SprintLevelCarousel({
                       {beatTop && (
                         <span
                           title="You Beat the #1 Time!"
-                          className="absolute top-[1.5px] right-[1.5px] bg-[#7FD1AE] text-[#111111] border border-[#111111] rounded-[2.5px] px-[2px] py-[0.5px] text-[6px] font-black leading-none"
+                          className="absolute top-[1px] right-[1px] bg-[#7FD1AE] text-[#111111] border border-[#111111] rounded-[2px] px-[1.5px] text-[5.5px] font-black leading-none"
                         >
                           ✓
                         </span>
@@ -455,27 +455,26 @@ export default function SprintLevelCarousel({
                     </div>
                   </div>
 
-                  {/* Right Room Metadata: Stage Code + Daily Tag, Room Title, #1 Time & PB */}
-                  <div className="flex-1 min-w-0 flex flex-col justify-center gap-[3px]">
+                  {/* Right Room Metadata: Stage Code + Daily Tag + Room Title & #1 Time / PB */}
+                  <div className="flex-1 min-w-0 flex flex-col justify-center gap-[2px]">
                     <div className="flex items-center gap-1 min-w-0 leading-none">
                       <span
                         style={{ backgroundColor: slot.badgeBg }}
-                        className="px-1 py-[1px] rounded border border-[#111111] text-[8px] font-black uppercase leading-none text-[#111111] shrink-0"
+                        className="px-1 py-[1px] rounded border border-[#111111] text-[7.5px] font-black uppercase leading-none text-[#111111] shrink-0"
                       >
                         {slot.code}
                       </span>
                       {slot.kind === 'daily' && (
-                        <span className="bg-[#EC6553] text-white border border-[#111111] rounded px-1 py-[1px] text-[6.5px] font-black uppercase leading-none shrink-0">
+                        <span className="bg-[#EC6553] text-white border border-[#111111] rounded px-1 py-[1px] text-[6px] font-black uppercase leading-none shrink-0">
                           DAILY
                         </span>
                       )}
+                      <span className="text-[8.5px] font-black uppercase tracking-tight text-[#111111] truncate leading-none">
+                        {slot.shortName}
+                      </span>
                     </div>
 
-                    <div className="text-[9.5px] font-black uppercase tracking-tight text-[#111111] truncate leading-tight">
-                      {slot.shortName}
-                    </div>
-
-                    <div className="flex items-center gap-1 text-[8.5px] font-black uppercase tabular-nums leading-none">
+                    <div className="flex items-center gap-1 text-[8px] font-black uppercase tabular-nums leading-none">
                       <span className={isActive ? 'text-[#111111]' : 'text-[#111111]/75'}>
                         👑 {(topMs / 1000).toFixed(2)}s
                       </span>

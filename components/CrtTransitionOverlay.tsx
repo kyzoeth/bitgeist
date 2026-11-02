@@ -162,15 +162,15 @@ function drawDiagonalTileShutter(
     return;
   }
 
-  const eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+  const eased = easeInOutCubic(progress);
   const cols = 32; // 32 * 8 = 256
   const rows = 30; // 30 * 8 = 240
-  const maxWave = cols - 1 + (rows - 1) * 0.78;
+  const maxWave = cols - 1 + (rows - 1) * 0.85;
 
   for (let ty = 0; ty < rows; ty++) {
     for (let tx = 0; tx < cols; tx++) {
-      const wave = (tx + ty * 0.78) / maxWave;
-      const local = Math.max(0, Math.min(1, eased * 1.82 - wave * 0.82));
+      const wave = (tx + ty * 0.85) / maxWave;
+      const local = Math.max(0, Math.min(1, eased * 1.9 - wave * 0.9));
       if (local <= 0.04) continue;
 
       const stepSize = Math.min(8, Math.max(2, Math.round(local * 4) * 2));
@@ -261,11 +261,13 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
       if (anim.kind === 'iris-open') {
         const t = Math.max(0, Math.min(1, (now - anim.startedAtMs) / Math.max(1, anim.durationMs)));
         const maxR = maxCornerRadius(anim.focusX, anim.focusY);
-        // Deliberate retro spotlight frame around the runner for the first 26%, then smooth ease-in-out sweep outward
+        // Two-stage retro spotlight: open onto runner (0..14%), hold circular spotlight frame around runner (14..38%), then sweep outward (38..100%)
         const radius =
-          t < 0.26
-            ? 8 + easeInOutCubic(t / 0.26) * 22
-            : 30 + easeInOutCubic((t - 0.26) / 0.74) * (maxR - 30);
+          t < 0.14
+            ? 6 + easeInOutCubic(t / 0.14) * 26
+            : t < 0.38
+              ? 32 + ((t - 0.14) / 0.24) * 4
+              : 36 + easeInOutCubic((t - 0.38) / 0.62) * (maxR - 36);
         drawSteppedPixelIrisMask(ctx, anim.focusX, anim.focusY, radius, anim.accentColor);
 
         if (t >= 1) {
@@ -322,9 +324,9 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
         const elapsed = Math.max(0, now - anim.startedAtMs);
         const accent = anim.beatTarget ? '#FFE74C' : '#7FD1AE';
 
-        // 1. Finish-Tape Impact Flash (0..320ms)
-        if (elapsed < 320) {
-          const ft = elapsed / 320;
+        // 1. Finish-Tape Impact Flash (0..480ms)
+        if (elapsed < 480) {
+          const ft = elapsed / 480;
           const alpha = 0.46 * Math.pow(1 - ft, 2);
           ctx.fillStyle = anim.beatTarget
             ? `rgba(255, 231, 76, ${alpha.toFixed(3)})`
@@ -332,16 +334,16 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
           ctx.fillRect(0, 0, NES_W, NES_H);
         }
 
-        // 2. Arcade Cinema Letterbox Bars + Checkered Trim (eases in smoothly over 0..340ms)
-        const barEase = 1 - Math.pow(1 - Math.min(1, elapsed / 340), 3);
-        const barH = Math.round(barEase * 14);
+        // 2. Arcade Cinema Letterbox Bars + Checkered Trim (eases in smoothly over 0..520ms)
+        const barEase = 1 - Math.pow(1 - Math.min(1, elapsed / 520), 3);
+        const barH = Math.round(barEase * 16);
         if (barH > 0) {
           ctx.fillStyle = CURTAIN_HEX;
           ctx.fillRect(0, 0, NES_W, barH);
           ctx.fillRect(0, NES_H - barH, NES_W, barH);
 
           if (barH >= 4) {
-            const scroll = Math.floor(elapsed / 95) % 2;
+            const scroll = Math.floor(elapsed / 120) % 2;
             for (let x = 0; x < NES_W; x += 8) {
               const even = ((x >> 3) + scroll) % 2 === 0;
               ctx.fillStyle = even ? accent : '#2B2A33';
@@ -351,8 +353,8 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
           }
         }
 
-        // 3. End-of-Run Stepped Pixel Iris-Out onto Winning Runner (lingers briefly on spotlight before closing)
-        const closeStart = Math.max(380, anim.totalMs - anim.closeDurationMs);
+        // 3. End-of-Run Stepped Pixel Iris-Out onto Winning Runner (pauses on spotlight around winner before closing)
+        const closeStart = Math.max(540, anim.totalMs - anim.closeDurationMs);
         if (anim.closeCurtainAtEnd && elapsed >= closeStart) {
           if (!anim.closeFired) {
             anim.closeFired = true;
@@ -364,9 +366,11 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
           );
           const maxR = maxCornerRadius(anim.focusX, anim.focusY);
           const radius =
-            ct < 0.72
-              ? maxR - easeInOutCubic(ct / 0.72) * (maxR - 28)
-              : 28 * (1 - easeInOutCubic((ct - 0.72) / 0.28));
+            ct < 0.58
+              ? maxR - easeInOutCubic(ct / 0.58) * (maxR - 32)
+              : ct < 0.76
+                ? 32 - ((ct - 0.58) / 0.18) * 4
+                : 28 * (1 - easeInOutCubic((ct - 0.76) / 0.24));
           drawSteppedPixelIrisMask(ctx, anim.focusX, anim.focusY, radius, accent);
         }
 
@@ -405,7 +409,7 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
         paintStaticState();
         return Promise.resolve();
       }
-      const durationMs = opts?.durationMs ?? 400;
+      const durationMs = opts?.durationMs ?? 920;
       animRef.current = {
         kind: 'shutter-close',
         startedAtMs: performance.now(),
@@ -438,7 +442,7 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
       animRef.current = {
         kind: 'iris-open',
         startedAtMs: performance.now(),
-        durationMs: opts?.durationMs ?? 680,
+        durationMs: opts?.durationMs ?? 1350,
         focusX: clampFocusX(opts?.focusX),
         focusY: clampFocusY(opts?.focusY),
         accentColor: opts?.accentColor || '#F5C342',
@@ -451,7 +455,7 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
       animRef.current = {
         kind: 'go-burst',
         startedAtMs: performance.now(),
-        durationMs: opts?.durationMs ?? 460,
+        durationMs: opts?.durationMs ?? 720,
       };
       ensureLoopRunning();
     },
@@ -461,8 +465,8 @@ export default function CrtTransitionOverlay({ transitionRef }: CrtTransitionOve
       animRef.current = {
         kind: 'finish-seq',
         startedAtMs: performance.now(),
-        totalMs: opts?.totalMs ?? 1950,
-        closeDurationMs: opts?.closeDurationMs ?? 780,
+        totalMs: opts?.totalMs ?? 3100,
+        closeDurationMs: opts?.closeDurationMs ?? 1450,
         closeCurtainAtEnd: opts?.closeCurtainAtEnd ?? true,
         focusX: clampFocusX(opts?.focusX),
         focusY: clampFocusY(opts?.focusY),

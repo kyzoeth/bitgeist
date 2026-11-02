@@ -237,10 +237,10 @@ export default function LeaderboardDrawer({
       <aside
         aria-label="Top 10 Speedrun Leaderboard"
         title={`${stageLabel} — Top 10 Leaderboard (Click any runner to race 1v1)`}
-        className="relative w-full max-h-full bg-[#EFE6CE] border-[3px] border-[#111111] rounded-2xl p-2 shadow-[inset_0_2px_0_#FFFDF7,inset_0_-3px_0_#D8CEB4,4px_5px_0px_#111111] flex flex-col gap-1.5"
+        className="flex-[56] min-h-0 relative w-full bg-[#EFE6CE] border-[3px] border-[#111111] rounded-2xl p-2 shadow-[inset_0_2px_0_#FFFDF7,inset_0_-3px_0_#D8CEB4,4px_5px_0px_#111111] flex flex-col gap-1"
       >
-        {/* Top Rack Header: Harmonized 23px Bar Matching PICK A SEGMENT */}
-        <div className="shrink-0 h-[23px] flex items-center justify-between gap-1 pb-1 border-b-2 border-[#111111]/15">
+        {/* Top Rack Header: Harmonized 21px Bar Matching PICK A SEGMENT */}
+        <div className="shrink-0 h-[21px] flex items-center justify-between gap-1 pb-1 border-b-2 border-[#111111]/15">
           <div className="flex items-center gap-1 min-w-0">
             <span className="text-[9px] font-black uppercase tracking-wider text-[#111111]/85 leading-none whitespace-nowrap">
               TOP 10
@@ -260,10 +260,10 @@ export default function LeaderboardDrawer({
 
         {renderKeyPopover()}
 
-        {/* 10 Tactile Runner Rows: Exact 326px Grid Height Harmonized With 6x51px PICK A SEGMENT */}
+        {/* 10 Tactile Runner Rows Stacked Directly Below PICK A SEGMENT */}
         <div
-          className="flex-1 min-h-0 grid gap-1"
-          style={{ gridTemplateRows: 'repeat(10, minmax(0, 29px))' }}
+          className="flex-1 min-h-0 grid gap-[3px]"
+          style={{ gridTemplateRows: 'repeat(10, minmax(0, 1fr))' }}
         >
           {slots.map((run, idx) => {
             const rank = idx + 1;

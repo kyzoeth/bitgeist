@@ -174,7 +174,7 @@ export function playScreenWipeSfx(direction: 'close' | 'open'): void {
       freqHz: 466.16,
       endFreqHz: 164.81,
       startOffsetSec: 0,
-      durationSec: 0.25,
+      durationSec: 0.52,
       type: 'triangle',
       peakGain: 0.032,
     });
@@ -183,7 +183,7 @@ export function playScreenWipeSfx(direction: 'close' | 'open'): void {
       freqHz: 196.0,
       endFreqHz: 587.33,
       startOffsetSec: 0,
-      durationSec: 0.32,
+      durationSec: 0.62,
       type: 'triangle',
       peakGain: 0.03,
     });
