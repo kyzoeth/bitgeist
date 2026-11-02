@@ -1655,8 +1655,12 @@ export default function BitgeistArena({
       void fetchGhostsForProfile(profile, seq);
 
       const vaultStateKey = getVaultStateKeyForProfile(profile);
-      const cachedStartState = await getStartStateFromVault(vaultStateKey);
+      const cachedStartState =
+        isBuiltinCart || explicitBounds ? await getStartStateFromVault(vaultStateKey) : null;
       if (isStale()) return;
+      if (!cachedStartState) {
+        checkpointBlobRef.current = null;
+      }
 
       // Fast ~25ms Same-ROM Level Swap (zero WASM reload & zero black CRT flash when savestate is cached!)
       const existingInstance = nostalgistRef.current;
@@ -2232,9 +2236,9 @@ export default function BitgeistArena({
             await new Promise((r) => setTimeout(r, 60));
           }
         } else {
-          // Universal BYO ROM without cached gameplay checkpoint: let PPU/WRAM finish cold-boot initialization
+          // Universal BYO ROM without cached gameplay checkpoint: let PPU/WRAM finish initial reset frame
           // without blindly pressing Start or capturing a splash/title/story savestate.
-          await new Promise((r) => setTimeout(r, 420));
+          await new Promise((r) => setTimeout(r, 60));
         }
 
         if (isStale()) {
@@ -2256,13 +2260,15 @@ export default function BitgeistArena({
           0
         );
 
-        if (isBuiltinCart || bootT.inGameplay) {
+        if (isBuiltinCart || (profile.profileKind === 'exact-ram' && bootT.inGameplay)) {
           // Verified controllable gameplay: capture exact 00.00s Starting-Line SaveState Snapshot & pause at frame 0
           try {
             const { state } = await instance.saveState();
             if (!isStale()) {
               checkpointBlobRef.current = state;
-              void saveStartStateToVault(vaultStateKey, state);
+              if (isBuiltinCart) {
+                void saveStartStateToVault(vaultStateKey, state);
+              }
             }
           } catch {
             // Non-fatal
@@ -2369,7 +2375,7 @@ export default function BitgeistArena({
   /**
    * Locks the exact 00.00s Starting-Line Savestate the moment a BYO ROM finishes its loading screen,
    * title menu, stage select, or opening story scene (or when the player clicks SYNC NOW),
-   * then launches the synchronized 3... 2... 1... GO! countdown.
+   * and starts the 00.00s sprint clock seamlessly without freezing the emulator.
    */
   const lockPregameStartingLine = useCallback(
     async (forceManual: boolean) => {
@@ -2447,6 +2453,7 @@ export default function BitgeistArena({
         liveStateRef.current.goalWorldX = curProf.goalWorldX;
         liveStateRef.current.inGameplay = true;
         trackerRef.current.manualSyncUnlocked = true;
+        trackerRef.current.hadGameplay = true;
         prevPlayerWorldXRef.current = px;
 
         try {
@@ -2455,7 +2462,6 @@ export default function BitgeistArena({
             return;
           }
           checkpointBlobRef.current = state;
-          void saveStartStateToVault(getVaultStateKeyForProfile(curProf), state);
         } catch {
           // Non-fatal
         }
@@ -2463,13 +2469,35 @@ export default function BitgeistArena({
         if (nostalgistRef.current !== instance || bootSeqRef.current !== expectedBootSeq) {
           return;
         }
-        pauseCore(instance);
-        beginPreRaceCountdown({ initialDelayMs: 0, openIris: false });
+
+        recordedFramesRef.current = [[0, px, liveStateRef.current.playerWorldY]];
+        lastRecordedFrameRef.current = 0;
+        raceElapsedMsRef.current = 0;
+        emulatedCoreFrameRef.current = 0;
+        pausedCoreFramesRef.current = 0;
+        lastObservedCoreFrameRef.current = 0;
+        liveStateRef.current.raceFrame = 0;
+        resetTickClockRef.current = true;
+        inputRecorderRef.current.reset();
+        overtakenGhostIdsRef.current.clear();
+        lastSplitRoomIdRef.current = null;
+        liveStateRef.current.popups.length = 0;
+
+        liveStateRef.current.raceStatus = 'racing';
+        setRaceStatus('racing');
+        setTimerText('00.00s');
+        setActiveSegments(1);
+        setCoreVolumeDb(instance, musicMutedRef.current ? -80 : 0);
+        videoRecorderRef.current.startRecording();
+        lastRealRamMutationMsRef.current = performance.now();
+        resumeCore(instance);
+        syncEffectiveVirtualButtons(true);
+        playRaceStartSfx();
       } finally {
         pregameLockingRef.current = false;
       }
     },
-    [beginPreRaceCountdown, fetchGhostsForProfile, getCurrentLiveInputMask]
+    [fetchGhostsForProfile, getCurrentLiveInputMask, syncEffectiveVirtualButtons]
   );
 
   const handleManualSyncStart = useCallback(() => {
@@ -3597,13 +3625,17 @@ export default function BitgeistArena({
       ) {
         const ram = getSystemRamView(instance, ramRegion);
         if (ram || profileRef.current.consoleSystem !== 'nes') {
-          const t = profileRef.current.extractTelemetry(
+          const curProf = profileRef.current;
+          const t = curProf.extractTelemetry(
             ram ?? EMPTY_RAM_VIEW,
             trackerRef.current,
             getCurrentLiveInputMask()
           );
           st.inGameplay = false;
-          if (t.inGameplay) {
+          // Auto-lock only for known exact-RAM profiles where RAM state deterministically distinguishes
+          // controllable stage gameplay from title/menu/overworld screens. Universal OAM/WRAM cartridges
+          // stay in live responsive pregame until the runner clicks SYNC NOW or + NEW SEGMENT.
+          if (curProf.profileKind === 'exact-ram' && t.inGameplay) {
             pregameReadyFramesRef.current++;
             if (pregameReadyFramesRef.current >= 4) {
               pregameReadyFramesRef.current = 0;
@@ -4422,7 +4454,8 @@ export default function BitgeistArena({
     setCoreVolumeDb(instance, musicMutedRef.current ? -80 : 0);
     lastRealRamMutationMsRef.current = performance.now();
     resumeCore(instance);
-  }, [clearPendingFinishModal, releaseAllVirtualButtons]);
+    syncEffectiveVirtualButtons(true);
+  }, [clearPendingFinishModal, releaseAllVirtualButtons, syncEffectiveVirtualButtons]);
 
   const handleConfirmSegmentStart = useCallback(async () => {
     const instance = nostalgistRef.current;
@@ -4448,6 +4481,8 @@ export default function BitgeistArena({
     await new Promise((r) => requestAnimationFrame(() => r(null)));
     const previewDataUrl = snapCanvasThumbnailDataUrl(emulatorCanvasRef.current);
     const { state } = await instance.saveState();
+    resumeCore(instance);
+    syncEffectiveVirtualButtons(true);
 
     segmentDraftRef.current = {
       startWorldX: Math.max(0, Math.round(capturedStartX)),
@@ -4458,7 +4493,7 @@ export default function BitgeistArena({
     segmentCreatorStepRef.current = 'mark-finish';
     setSegmentCreatorStep('mark-finish');
     playCountdownTickSfx(2);
-  }, [getCurrentLiveInputMask]);
+  }, [getCurrentLiveInputMask, syncEffectiveVirtualButtons]);
 
   const handleConfirmSegmentFinish = useCallback(async () => {
     const instance = nostalgistRef.current;
@@ -4548,8 +4583,19 @@ export default function BitgeistArena({
     setSegmentCreatorStep('idle');
     segmentDraftRef.current = null;
     setSegmentDraftDistancePx(0);
+    const instance = nostalgistRef.current;
+    if (!checkpointBlobRef.current && instance) {
+      liveStateRef.current.inGameplay = false;
+      liveStateRef.current.raceStatus = 'pregame';
+      setRaceStatus('pregame');
+      setTimerText('INTRO');
+      setActiveSegments(0);
+      resumeCore(instance);
+      syncEffectiveVirtualButtons(true);
+      return;
+    }
     void resetToStartingLine(false);
-  }, [resetToStartingLine]);
+  }, [resetToStartingLine, syncEffectiveVirtualButtons]);
 
   /**
    * Capture-Phase Start-on-First-Input + Ergonomic Alternate Key Forwarding (WASD, X, Shift, R, M, N, [, ], Esc).

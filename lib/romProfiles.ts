@@ -1000,41 +1000,59 @@ function createUniversalNesProfile(romId: string, rawName: string): RomProfile {
       }
 
       const oamBase = detectActiveNesOamPage(ram);
-      // Find first visible player-like sprite cluster (skip sprite 0 HUD hit)
+      const activeGameplay = prev.hadGameplay || Boolean(prev.manualSyncUnlocked);
+      // Track player sprite cluster across OAM slots (skipping sprite 0 HUD hit).
+      // Once gameplay is active, prefer the visible sprite closest to the previous frame's position
+      // so OAM flicker/multiplexing never teleports playerWorldX.
       let spriteX = prev.oamX || this.startWorldX;
       let spriteY = prev.oamY || 176;
       let spriteTile = prev.oamTile;
       let spriteAttr = 0;
       let found = false;
+      let bestCost = Number.POSITIVE_INFINITY;
 
       for (let off = oamBase + 4; off < oamBase + 0x90; off += 4) {
         const y = ram[off];
         const x = ram[off + 3];
         if (y >= 20 && y < 228 && x > 4 && x < 248) {
-          spriteX = x;
-          spriteY = y + 16;
-          spriteTile = ram[off + 1];
-          spriteAttr = ram[off + 2];
-          found = true;
-          break;
+          if (!activeGameplay || prev.oamX <= 0) {
+            spriteX = x;
+            spriteY = y + 16;
+            spriteTile = ram[off + 1];
+            spriteAttr = ram[off + 2];
+            found = true;
+            break;
+          }
+          const slotIndex = (off - (oamBase + 4)) >> 2;
+          const cost =
+            Math.abs(x - prev.oamX) +
+            Math.abs(y + 16 - (prev.oamY || 176)) * 0.5 +
+            slotIndex * 1.5;
+          if (cost < bestCost) {
+            bestCost = cost;
+            spriteX = x;
+            spriteY = y + 16;
+            spriteTile = ram[off + 1];
+            spriteAttr = ram[off + 2];
+            found = true;
+          }
         }
       }
 
       if (!found) {
         prev.missingSpriteFrames = (prev.missingSpriteFrames ?? 0) + 1;
         prev.causalMoveFrames = 0;
-        const flickerBridge = prev.hadGameplay && (prev.missingSpriteFrames ?? 0) <= 4;
-        const heldWorldX = prev.hadGameplay
+        const heldWorldX = activeGameplay
           ? prev.cameraX + (prev.oamX || this.startWorldX)
           : this.startWorldX;
         return {
-          inGameplay: flickerBridge,
+          inGameplay: activeGameplay,
           playerWorldX: heldWorldX,
           playerWorldY: clampScreenY(prev.oamY || 176),
-          cameraX: prev.hadGameplay ? prev.cameraX : 0,
+          cameraX: activeGameplay ? prev.cameraX : 0,
           facingLeft: false,
           isDead: false,
-          reachedGoal: flickerBridge && heldWorldX >= this.goalWorldX,
+          reachedGoal: activeGameplay && heldWorldX >= this.goalWorldX,
         };
       }
 
@@ -1129,7 +1147,7 @@ function createUniversalNesProfile(romId: string, rawName: string): RomProfile {
 
       const cameraX = Math.round(nextCameraX);
       const playerWorldX = cameraX + spriteX;
-      const isDead = prev.hadGameplay && spriteY >= 238;
+      const isDead = false;
       const reachedGoal = inGameplay && playerWorldX >= this.goalWorldX;
 
       return {

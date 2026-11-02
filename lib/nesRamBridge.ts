@@ -207,9 +207,12 @@ function isFceummStateChunkHeaderBefore(heap: Uint8Array, ptr: number): boolean 
  * inside `EmscriptenModule.HEAPU8`.
  * Never calls `_cmd_toggle_pause` (`nostalgist.pause()` / `nostalgist.resume()`) so RetroArch's
  * 60Hz Emscripten main loop cannot desynchronize from `nostalgist.getStatus()`.
- * Excludes serialized `"RAM\0"` savestate buffers in heap memory, and disambiguates multiple
- * candidates via live frame mutation.
+ * Excludes serialized `"RAM\0"` savestate buffers and all-zero heap regions, prioritizes fceumm's
+ * canonical static `RAM[0x800]` BSS offset (`0x29e030`), and disambiguates multiple candidates via
+ * live frame mutation.
  */
+const FCEUMM_CANONICAL_RAM_OFFSET = 0x29e030;
+
 async function locateNesSystemRamOffset(nostalgist: Nostalgist): Promise<number | null> {
   try {
     const { state } = await nostalgist.saveState();
@@ -223,48 +226,82 @@ async function locateNesSystemRamOffset(nostalgist: Nostalgist): Promise<number 
     }
 
     const maxOffset = heap.length - 0x800;
-    const candidates: number[] = [];
+    const scoredCandidates: Array<{ ptr: number; matchedNonZero: number; mismatches: number }> = [];
 
-    // Collect all candidate 2KB regions in HEAPU8 matching Stack ($0180-$01FF) + Work-RAM ($0300-$07FF)
-    // (excluding volatile Zero-Page $0000-$00FF & OAM $0200-$02FF which mutate while `await saveState()` resolves,
-    // and excluding `"RAM\0"` serialized savestate chunk headers).
-    const workBytes = 0x500 + 0x80; // 1,408 bytes
+    // Collect non-zero byte positions in ramSnapshot so games that zero-fill $0100-$07FF on reset
+    // cannot falsely match all-zero regions at the bottom of HEAPU8.
+    const nonZeroIndices: number[] = [];
+    for (let i = 0; i < 0x800; i++) {
+      if (ramSnapshot[i] !== 0) {
+        nonZeroIndices.push(i);
+      }
+    }
+
+    const workBytes = 0x500 + 0x80; // 1,408 bytes ($0180-$01FF + $0300-$07FF)
     const maxWorkMismatches = Math.floor(workBytes * 0.08);
     const anchor180 = ramSnapshot[0x180];
     const anchor1ff = ramSnapshot[0x1ff];
     const anchor400 = ramSnapshot[0x400];
-    for (let ptr = 0; ptr <= maxOffset; ptr += 4) {
-      if (
-        heap[ptr + 0x180] !== anchor180 ||
-        heap[ptr + 0x1ff] !== anchor1ff ||
-        heap[ptr + 0x400] !== anchor400 ||
-        isFceummStateChunkHeaderBefore(heap, ptr)
-      ) {
-        continue;
+
+    const evaluateCandidate = (ptr: number) => {
+      if (ptr < 0 || ptr > maxOffset || isFceummStateChunkHeaderBefore(heap, ptr)) {
+        return;
       }
       let mismatches = 0;
       for (let k = 0x180; k < 0x200; k++) {
-        if (heap[ptr + k] !== ramSnapshot[k] && ++mismatches > maxWorkMismatches) break;
+        if (heap[ptr + k] !== ramSnapshot[k] && ++mismatches > maxWorkMismatches) return;
       }
-      if (mismatches <= maxWorkMismatches) {
-        for (let k = 0x300; k < 0x800; k++) {
-          if (heap[ptr + k] !== ramSnapshot[k] && ++mismatches > maxWorkMismatches) break;
+      for (let k = 0x300; k < 0x800; k++) {
+        if (heap[ptr + k] !== ramSnapshot[k] && ++mismatches > maxWorkMismatches) return;
+      }
+      let matchedNonZero = 0;
+      for (let idx = 0; idx < nonZeroIndices.length; idx++) {
+        const off = nonZeroIndices[idx];
+        if (heap[ptr + off] === ramSnapshot[off]) {
+          matchedNonZero++;
         }
       }
-      if (mismatches <= maxWorkMismatches) {
-        candidates.push(ptr);
-        if (candidates.length >= 32) break;
+      if (nonZeroIndices.length > 0 && matchedNonZero === 0) {
+        return;
       }
+      scoredCandidates.push({ ptr, matchedNonZero, mismatches });
+    };
+
+    evaluateCandidate(FCEUMM_CANONICAL_RAM_OFFSET);
+
+    for (let ptr = 0; ptr <= maxOffset; ptr += 4) {
+      if (
+        ptr === FCEUMM_CANONICAL_RAM_OFFSET ||
+        heap[ptr + 0x180] !== anchor180 ||
+        heap[ptr + 0x1ff] !== anchor1ff ||
+        heap[ptr + 0x400] !== anchor400
+      ) {
+        continue;
+      }
+      evaluateCandidate(ptr);
     }
 
-    if (candidates.length === 0) {
-      return null;
+    if (scoredCandidates.length === 0) {
+      return FCEUMM_CANONICAL_RAM_OFFSET <= maxOffset ? FCEUMM_CANONICAL_RAM_OFFSET : null;
+    }
+
+    scoredCandidates.sort((a, b) => {
+      if (b.matchedNonZero !== a.matchedNonZero) return b.matchedNonZero - a.matchedNonZero;
+      if (a.mismatches !== b.mismatches) return a.mismatches - b.mismatches;
+      if (a.ptr === FCEUMM_CANONICAL_RAM_OFFSET) return -1;
+      if (b.ptr === FCEUMM_CANONICAL_RAM_OFFSET) return 1;
+      return a.ptr - b.ptr;
+    });
+
+    const candidates = scoredCandidates.slice(0, 16).map((c) => c.ptr);
+    if (candidates.length === 1) {
+      return candidates[0];
     }
 
     // Disambiguate true live CPU RAM from static savestate/scratch buffers in HEAPU8 by observing
-    // ~3 live frames (48ms) WITHOUT calling saveState(), pause(), or resume().
+    // ~2.5 live frames (40ms) WITHOUT calling saveState(), pause(), or resume().
     const beforeSlices = candidates.map((ptr) => heap.slice(ptr, ptr + 0x300));
-    await new Promise((r) => setTimeout(r, 48));
+    await new Promise((r) => setTimeout(r, 40));
 
     const freshHeap = (nostalgist.getEmscriptenModule() as unknown as { HEAPU8?: Uint8Array })
       ?.HEAPU8;
