@@ -528,8 +528,10 @@ export default function BitgeistArena({
   );
   const [pbRevision, setPbRevision] = useState<number>(0);
 
-  // Stage 6: 10-Ghost Swarm Toggle
+  // Stage 6: 10-Ghost Swarm Toggle & Collapsible Side Sections
   const [swarmEnabled, setSwarmEnabled] = useState<boolean>(false);
+  const [segmentCollapsed, setSegmentCollapsed] = useState<boolean>(false);
+  const [topTenCollapsed, setTopTenCollapsed] = useState<boolean>(false);
 
   // Stage 7: 3-Room Daily Trifecta Relay Mode & Head-to-Head Rivalry Series
   const [relayModeEnabled, setRelayModeEnabled] = useState<boolean>(false);
@@ -4669,13 +4671,21 @@ export default function BitgeistArena({
   const showDareBanner = Boolean(activeEffectiveDareSlug && targetGhost);
   const activeBuiltinCart = findBuiltinCartridgeByRomId(activeProfile.romId);
   const showSidePanels = vw >= 960;
-  const sideRailWidthPx = vw >= 1220 ? 224 : vw >= 1080 ? 208 : 196;
+  const sideRailWidthPx = vw >= 1220 ? 308 : vw >= 1080 ? 268 : 236;
   const sideRailGapPx = 12;
   const singleSideRailExtraPx = showSidePanels ? sideRailWidthPx + sideRailGapPx : 0;
   const totalSideRailsExtraWidthPx = singleSideRailExtraPx;
 
-  const horizontalSegmentBannerExtraPx = !showSidePanels ? 98 + (vw < 540 ? 22 : 0) : 0;
-  const horizontalTopTenBannerExtraPx = !showSidePanels ? 78 : 0;
+  const horizontalSegmentBannerExtraPx = !showSidePanels
+    ? segmentCollapsed
+      ? 44
+      : 98 + (vw < 540 ? 22 : 0)
+    : 0;
+  const horizontalTopTenBannerExtraPx = !showSidePanels
+    ? topTenCollapsed
+      ? 44
+      : 82
+    : 0;
   const mobileHeaderWrapExtraPx = vw < 640 ? 48 : 0;
   const dareBannerExtraPx = showDareBanner ? 44 : 0;
   const baseNonScreenHeightPx =
@@ -5054,6 +5064,8 @@ export default function BitgeistArena({
               segmentDraftDistancePx={segmentDraftDistancePx}
               relayModeEnabled={relayModeEnabled}
               relayLegIndex={relayLegIndex}
+              collapsed={segmentCollapsed}
+              onToggleCollapse={() => setSegmentCollapsed((v) => !v)}
               layout="horizontal"
               onSelectDaily={handleSelectDailyChallenge}
               onSelectCourse={handleSelectCourse}
@@ -5075,6 +5087,8 @@ export default function BitgeistArena({
               localPbMs={activeLocalPbMs}
               rivalMode={rivalMode}
               swarmEnabled={swarmEnabled}
+              collapsed={topTenCollapsed}
+              onToggleCollapse={() => setTopTenCollapsed((v) => !v)}
               playerTag={playerTag}
               identityInfo={identityInfo}
               layout="horizontal"
@@ -5431,6 +5445,9 @@ export default function BitgeistArena({
                   segmentDraftDistancePx={segmentDraftDistancePx}
                   relayModeEnabled={relayModeEnabled}
                   relayLegIndex={relayLegIndex}
+                  collapsed={segmentCollapsed}
+                  expandedSolo={!segmentCollapsed && topTenCollapsed}
+                  onToggleCollapse={() => setSegmentCollapsed((v) => !v)}
                   layout="vertical"
                   onSelectDaily={handleSelectDailyChallenge}
                   onSelectCourse={handleSelectCourse}
@@ -5452,6 +5469,9 @@ export default function BitgeistArena({
                   localPbMs={activeLocalPbMs}
                   rivalMode={rivalMode}
                   swarmEnabled={swarmEnabled}
+                  collapsed={topTenCollapsed}
+                  expandedSolo={!topTenCollapsed && segmentCollapsed}
+                  onToggleCollapse={() => setTopTenCollapsed((v) => !v)}
                   playerTag={playerTag}
                   identityInfo={identityInfo}
                   layout="vertical"
