@@ -2701,17 +2701,36 @@ export default function BitgeistArena({
                 : '#F5C342';
 
           if (shouldCloseCurtainFirst && !pendingResetRequestRef.current) {
-            if (userAudioUnlockedRef.current && !curOpts?.withDeathFlash && !isAttract) {
-              playScreenWipeSfx('close');
-            }
-            await crtTransitionRef.current?.playShutterClose({
-              accentColor: wipeAccent,
-              durationMs: curOpts?.withDeathFlash ? 820 : 920,
-            });
-            if (isStaleReset()) return;
-            if (!pendingResetRequestRef.current && !curAutoResume) {
-              await new Promise((r) => setTimeout(r, 200));
+            if (curOpts?.withDeathFlash) {
+              // Phase 1 (580ms): Let the in-game death animation & coral WIPEOUT plaque register clearly
+              // on the CRT before the diagonal tile shutter begins closing.
+              liveStateRef.current.inGameplay = true;
+              liveStateRef.current.deathFlashFrames = Math.max(
+                liveStateRef.current.deathFlashFrames,
+                160
+              );
+              const deathBeatStart = performance.now();
+              while (performance.now() - deathBeatStart < 580) {
+                if (isStaleReset() || pendingResetRequestRef.current) break;
+                await new Promise((r) => setTimeout(r, 45));
+              }
               if (isStaleReset()) return;
+            }
+            if (!pendingResetRequestRef.current) {
+              if (userAudioUnlockedRef.current && !isAttract) {
+                playScreenWipeSfx('close');
+              }
+              // Phase 2 (1280ms on death, 920ms on manual/normal): Deliberate 8-bit diagonal tile shutter close
+              await crtTransitionRef.current?.playShutterClose({
+                accentColor: wipeAccent,
+                durationMs: curOpts?.withDeathFlash ? 1280 : 920,
+              });
+              if (isStaleReset()) return;
+              // Phase 3 (460ms on death, 200ms on manual/normal): Closed-curtain breath hold before iris reveal
+              if (!pendingResetRequestRef.current && !curAutoResume) {
+                await new Promise((r) => setTimeout(r, curOpts?.withDeathFlash ? 460 : 200));
+                if (isStaleReset()) return;
+              }
             }
           } else if (wasPausedBeforeReset) {
             await new Promise((r) => setTimeout(r, 110));
@@ -2875,15 +2894,20 @@ export default function BitgeistArena({
               )
             )
           );
+          const irisOpenDurationMs = curOpts?.withDeathFlash ? 1550 : 1350;
           if (userAudioUnlockedRef.current && !isAttract) {
             playScreenWipeSfx('open');
           }
-          irisOpenUntilMsRef.current = performance.now() + 1350;
+          irisOpenUntilMsRef.current = performance.now() + irisOpenDurationMs;
           crtTransitionRef.current?.playIrisOpen({
             focusX: startFocusX,
             focusY: startFocusY,
-            accentColor: isAttract ? '#7FD1AE' : '#F5C342',
-            durationMs: 1350,
+            accentColor: isAttract
+              ? '#7FD1AE'
+              : curOpts?.withDeathFlash
+                ? '#EC6553'
+                : '#F5C342',
+            durationMs: irisOpenDurationMs,
           });
 
           liveStateRef.current.isReplayingInputs = isReplay;
@@ -2924,8 +2948,11 @@ export default function BitgeistArena({
             }
           } else if (curOpts?.startCountdown) {
             videoRecorderRef.current.discard();
-            // Let the 1350ms spotlight iris frame the runner and sweep outward for 1050ms before striking beat "3" for its full 900ms
-            beginPreRaceCountdown({ initialDelayMs: 1050, openIris: false });
+            // Let the spotlight iris frame the runner and sweep outward before striking beat "3" for its full 900ms
+            beginPreRaceCountdown({
+              initialDelayMs: curOpts?.withDeathFlash ? 1250 : 1050,
+              openIris: false,
+            });
           } else {
             videoRecorderRef.current.discard();
             clearPendingFinishModal();
@@ -3894,7 +3921,7 @@ export default function BitgeistArena({
             }
           }
 
-          // Auto-10ms Death Respawn (suppressed while freely exploring in Visual Segment Creator)
+          // Deliberate 4-Phase Death Respawn Sequence (suppressed while freely exploring in Visual Segment Creator)
           if (!isMarkingCustomSegment && t.isDead && intFrame > 12) {
             prevTracker.hadGameplay = false;
             if (st.isAttractReplay && activeAttractCandidateRef.current) {
@@ -3904,6 +3931,8 @@ export default function BitgeistArena({
               rafId = requestAnimationFrame(tick);
               return;
             }
+            st.inGameplay = true;
+            st.deathFlashFrames = 160;
             playDeathResetSfx();
             gamepadPollerRef.current.pulseRumble('death');
             if (st.isReplayingInputs) {

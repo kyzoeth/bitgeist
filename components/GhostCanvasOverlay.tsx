@@ -247,18 +247,17 @@ export default function GhostCanvasOverlay({
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.imageSmoothingEnabled = false;
 
-      // Brief coral flash on 10ms death auto-respawn
+      // Deliberate Coral Death Impact Frame & Arcade Wipeout Banner
+      const activeDeathFlashFrames = st.deathFlashFrames;
       if (st.deathFlashFrames > 0) {
         st.deathFlashFrames--;
-        ctx.fillStyle = 'rgba(236, 101, 83, 0.42)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
       if (
         st.raceStatus === 'booting' ||
         st.raceStatus === 'error' ||
         st.raceStatus === 'pregame' ||
-        (st.inGameplay === false && st.raceStatus !== 'won')
+        (st.inGameplay === false && st.raceStatus !== 'won' && activeDeathFlashFrames <= 0)
       ) {
         rafId = requestAnimationFrame(renderFrame);
         return;
@@ -877,6 +876,48 @@ export default function GhostCanvasOverlay({
           ctx.font = '900 11px monospace';
           ctx.fillText(dText, centerX, cardY + 75);
         }
+        ctx.restore();
+      }
+
+      // 5b. Deliberate Coral Death Impact Frame & Arcade Wipeout Plaque (during pre-shutter death beat & shutter close)
+      if (activeDeathFlashFrames > 0 && !isWon) {
+        ctx.save();
+        // Initial brief coral impact pulse (~200ms) that settles into an unobstructed perimeter frame
+        const impactAlpha = activeDeathFlashFrames > 148 ? 0.28 : 0.12;
+        ctx.fillStyle = `rgba(236, 101, 83, ${impactAlpha.toFixed(3)})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Crisp 8-bit coral top & bottom hazard frame bars
+        ctx.fillStyle = '#111111';
+        ctx.fillRect(0, 0, canvas.width, 8);
+        ctx.fillRect(0, canvas.height - 8, canvas.width, 8);
+        ctx.fillStyle = '#EC6553';
+        ctx.fillRect(0, 0, canvas.width, 6);
+        ctx.fillRect(0, canvas.height - 6, canvas.width, 6);
+
+        // Compact Top-Center Arcade Wipeout Plaque (leaves center playfield clear to see death burst!)
+        const cardW = 284;
+        const cardH = 56;
+        const cardX = Math.round((canvas.width - cardW) / 2);
+        const cardY = 26;
+
+        ctx.fillStyle = '#111111';
+        ctx.fillRect(cardX + 5, cardY + 5, cardW, cardH);
+        ctx.fillRect(cardX - 3, cardY - 3, cardW + 6, cardH + 6);
+        ctx.fillStyle = '#EC6553';
+        ctx.fillRect(cardX, cardY, cardW, cardH);
+        ctx.fillStyle = '#18171C';
+        ctx.fillRect(cardX + 5, cardY + 5, cardW - 10, cardH - 10);
+
+        ctx.textAlign = 'center';
+        const centerX = canvas.width / 2;
+        ctx.fillStyle = '#FFE74C';
+        ctx.font = '900 15px monospace';
+        ctx.fillText('✕ WIPEOUT! ✕', centerX, cardY + 26);
+
+        ctx.fillStyle = '#FFF8E7';
+        ctx.font = '900 11px monospace';
+        ctx.fillText('RESETTING TO STARTING LINE...', centerX, cardY + 43);
         ctx.restore();
       }
 
