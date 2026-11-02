@@ -2,12 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GHOST_PALETTE, sanitizeArcadeTag } from '@/lib/ghostShare';
 import { checkSlidingWindowRateLimit, extractClientIp } from '@/lib/rateLimit';
 import { DEFAULT_ROM_ID } from '@/lib/romProfiles';
-import type { LivePartyLobbyState, LivePartyRunner, RaceStatus } from '@/lib/types';
+import type {
+  LivePartyLobbyState,
+  LivePartyReaction,
+  LivePartyRunner,
+  RaceStatus,
+} from '@/lib/types';
 
 const RUNNER_STALE_MS = 18_000;
+const REACTION_STALE_MS = 8_000;
 const LOBBY_STALE_MS = 15 * 60_000;
 const MAX_LOBBIES = 200;
 const MAX_RUNNERS_PER_LOBBY = 6;
+
+const ALLOWED_EMOJIS = new Set(['🔥', '⚡', '👑', '💀', '🚀', '💎']);
 
 const VALID_STATUSES = new Set<RaceStatus>([
   'booting',
@@ -27,6 +35,7 @@ interface InternalLobby {
   countdownStartAtMs: number | null;
   updatedAtMs: number;
   runners: Map<string, LivePartyRunner>;
+  reactions: LivePartyReaction[];
 }
 
 interface GlobalLobbyHolder {
@@ -69,6 +78,7 @@ function pruneLobbies(lobbies: Map<string, InternalLobby>, now: number): void {
         lobby.runners.delete(rid);
       }
     }
+    lobby.reactions = lobby.reactions.filter((r) => now - r.createdAtMs <= REACTION_STALE_MS);
     if (lobby.runners.size === 0 || now - lobby.updatedAtMs > LOBBY_STALE_MS) {
       lobbies.delete(code);
     } else if (!lobby.runners.has(lobby.hostRunnerId)) {
@@ -93,6 +103,7 @@ function serializeLobby(lobby: InternalLobby): LivePartyLobbyState {
       if (b.finishTimeMs !== null) return 1;
       return b.worldX - a.worldX;
     }),
+    reactions: lobby.reactions.slice(-8),
   };
 }
 
@@ -131,7 +142,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = (await req.json()) as {
-      action?: 'join' | 'heartbeat' | 'startCountdown' | 'leave';
+      action?: 'join' | 'heartbeat' | 'startCountdown' | 'react' | 'leave';
       roomCode?: string;
       runnerId?: string;
       tag?: string;
@@ -142,6 +153,7 @@ export async function POST(req: NextRequest) {
       raceFrame?: number;
       status?: RaceStatus;
       finishTimeMs?: number | null;
+      emoji?: string;
     };
 
     const now = Date.now();
@@ -195,6 +207,7 @@ export async function POST(req: NextRequest) {
         countdownStartAtMs: null,
         updatedAtMs: now,
         runners: new Map<string, LivePartyRunner>(),
+        reactions: [],
       };
       lobbies.set(roomCode, lobby);
     }
@@ -250,12 +263,26 @@ export async function POST(req: NextRequest) {
       updatedAtMs: now,
     });
 
+    if (body.action === 'react' && typeof body.emoji === 'string' && ALLOWED_EMOJIS.has(body.emoji)) {
+      lobby.reactions.push({
+        id: `${now}-${Math.random().toString(36).slice(2, 7)}`,
+        tag,
+        emoji: body.emoji,
+        createdAtMs: now,
+      });
+      if (lobby.reactions.length > 16) {
+        lobby.reactions = lobby.reactions.slice(-16);
+      }
+    }
+
     if (body.action === 'startCountdown') {
-      lobby.countdownStartAtMs = now + 500;
-      for (const r of lobby.runners.values()) {
-        r.finishTimeMs = null;
-        r.raceFrame = 0;
-        r.status = 'countdown';
+      lobby.countdownStartAtMs = now + 450;
+      for (const [rid, r] of lobby.runners.entries()) {
+        lobby.runners.set(rid, {
+          ...r,
+          finishTimeMs: null,
+          raceFrame: 0,
+        });
       }
     }
 

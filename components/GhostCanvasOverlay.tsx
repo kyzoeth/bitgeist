@@ -13,6 +13,7 @@ import {
   GhostKeyframe,
   GhostRun,
   LivePartyRunner,
+  PracticePinState,
   RaceStatus,
 } from '@/lib/types';
 
@@ -51,6 +52,7 @@ interface GhostCanvasOverlayProps {
   swarmEnabled?: boolean;
   partyRunners?: readonly LivePartyRunner[];
   selfRunnerId?: string;
+  practicePin?: PracticePinState | null;
   liveStateRef: React.MutableRefObject<LiveOverlayState>;
   overlayCanvasRef?: React.MutableRefObject<HTMLCanvasElement | null>;
 }
@@ -178,6 +180,7 @@ export default function GhostCanvasOverlay({
   swarmEnabled = false,
   partyRunners = [],
   selfRunnerId = '',
+  practicePin = null,
   liveStateRef,
   overlayCanvasRef,
 }: GhostCanvasOverlayProps) {
@@ -187,6 +190,7 @@ export default function GhostCanvasOverlay({
   const swarmEnabledRef = useRef<boolean>(swarmEnabled);
   const partyRunnersRef = useRef<readonly LivePartyRunner[]>(partyRunners);
   const selfRunnerIdRef = useRef<string>(selfRunnerId);
+  const practicePinRef = useRef<PracticePinState | null>(practicePin);
 
   useEffect(() => {
     if (overlayCanvasRef) {
@@ -218,6 +222,10 @@ export default function GhostCanvasOverlay({
   useEffect(() => {
     selfRunnerIdRef.current = selfRunnerId;
   }, [selfRunnerId]);
+
+  useEffect(() => {
+    practicePinRef.current = practicePin;
+  }, [practicePin]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -546,7 +554,27 @@ export default function GhostCanvasOverlay({
               });
               const sprites = getHologramRunnerSprites(archetype, runnerColor, pose, facingLeft);
 
-              // 2a. Soft Translucent Hologram Speed Echoes
+              // 2a. Stage 11: World-Space Ghost Trajectory Breadcrumb Arc + Soft Hologram Speed Echoes
+              if (overFinishFrames === 0 && effectiveFrame > 4) {
+                for (let step = 8; step >= 1; step--) {
+                  const crumbFrame = effectiveFrame - step * 4;
+                  if (crumbFrame <= 0) continue;
+                  if (
+                    interpolateGhostPosInto(g.frames, crumbFrame, g.diedAtFrame, scratchPrevPos) &&
+                    scratchPrevPos.alive
+                  ) {
+                    const cx = Math.round((scratchPrevPos.x - st.cameraX) * scale);
+                    const cy = Math.round((scratchPrevPos.y - camY) * scale) - 16;
+                    const fade = (1 - step / 9) * 0.55 * finishFade;
+                    ctx.globalAlpha = fade;
+                    ctx.fillStyle = '#111111';
+                    ctx.fillRect(cx - 3, cy - 3, 6, 6);
+                    ctx.fillStyle = step % 2 === 0 ? '#FFE74C' : '#7FD1AE';
+                    ctx.fillRect(cx - 2, cy - 2, 4, 4);
+                  }
+                }
+              }
+
               if (
                 sprites &&
                 overFinishFrames === 0 &&
@@ -650,6 +678,29 @@ export default function GhostCanvasOverlay({
       }
 
       ctx.globalAlpha = 1;
+
+      // 2e. Stage 14: Holographic Practice Save-Pin Beacon (When Active)
+      const activePin = practicePinRef.current;
+      if (activePin && !isAttract) {
+        const pinSx = Math.round((activePin.worldX - st.cameraX) * scale) + 12;
+        const pinSy = Math.round((activePin.worldY - camY) * scale);
+        if (pinSx >= -48 && pinSx <= canvas.width + 48 && pinSy >= -48 && pinSy <= canvas.height + 48) {
+          ctx.fillStyle = '#111111';
+          ctx.fillRect(pinSx - 2, pinSy - 34, 4, 34);
+          ctx.fillStyle = '#4CC9F0';
+          ctx.fillRect(pinSx - 1, pinSy - 33, 2, 32);
+
+          const pinText = '📍 PIN [O]';
+          ctx.font = '900 9px monospace';
+          const ptw = Math.ceil(ctx.measureText(pinText).width);
+          ctx.fillStyle = '#111111';
+          ctx.fillRect(pinSx, pinSy - 36, ptw + 8, 13);
+          ctx.fillStyle = '#4CC9F0';
+          ctx.fillRect(pinSx + 1, pinSy - 35, ptw + 6, 11);
+          ctx.fillStyle = '#111111';
+          ctx.fillText(pinText, pinSx + 4, pinSy - 26);
+        }
+      }
 
       // 3. Starting-State Objective Sign (Only When Finish Gate Is Off-Screen; Rival Info Already Lives in Top Bezel)
       if (isWaiting && gateScreenX > canvas.width - 16) {

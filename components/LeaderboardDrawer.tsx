@@ -2,13 +2,14 @@
 
 import React, { useState } from 'react';
 import { sanitizeArcadeTag } from '@/lib/ghostShare';
-import { ArcadeIdentityInfo, GhostRun } from '@/lib/types';
+import { ArcadeIdentityInfo, GhostRun, MountainStandingEntry } from '@/lib/types';
 
 export type RivalSelectionMode = 'top' | 'pb' | 'custom';
 
 interface LeaderboardDrawerProps {
   stageLabel: string;
   leaderboard: GhostRun[];
+  mountainStandings?: readonly MountainStandingEntry[];
   totalRuns: number;
   activeTargetGhost: GhostRun | null;
   localPbGhost: GhostRun | null;
@@ -32,6 +33,7 @@ interface LeaderboardDrawerProps {
 export default function LeaderboardDrawer({
   stageLabel,
   leaderboard,
+  mountainStandings = [],
   totalRuns,
   activeTargetGhost,
   localPbGhost,
@@ -51,6 +53,7 @@ export default function LeaderboardDrawer({
   onWatchGhostReplay,
   onRestoreClaimKey,
 }: LeaderboardDrawerProps) {
+  const [boardView, setBoardView] = useState<'room' | 'mountain'>('room');
   const [showKeyTools, setShowKeyTools] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
   const [restoreInput, setRestoreInput] = useState('');
@@ -74,6 +77,8 @@ export default function LeaderboardDrawer({
   );
 
   const slots = Array.from({ length: 10 }, (_, idx) => leaderboard[idx] ?? null);
+  const mountainSlots = Array.from({ length: 10 }, (_, idx) => mountainStandings[idx] ?? null);
+  const hasMountainStandings = mountainStandings.length > 0;
 
   const handleCopyClaimKey = async () => {
     if (!identityInfo?.claimKey) return;
@@ -101,9 +106,33 @@ export default function LeaderboardDrawer({
 
   const renderHeaderControls = () => (
     <div className="flex items-center gap-1 shrink-0">
+      {hasMountainStandings && (
+        <button
+          type="button"
+          onClick={() => setBoardView((v) => (v === 'room' ? 'mountain' : 'room'))}
+          aria-pressed={boardView === 'mountain'}
+          aria-label="Toggle 6-Room Mountain Standings"
+          title={
+            boardView === 'mountain'
+              ? 'Viewing Overall 6-Room Mountain King Standings (Click for Single Room Top 10)'
+              : 'View Overall 6-Room Mountain King Standings (Crowns & Total Time)'
+          }
+          className={`px-1.5 h-[22px] rounded-[5px] border-[1.5px] border-[#111111] font-black text-[8.5px] uppercase leading-none flex items-center justify-center cursor-pointer select-none transition-all duration-75 ${
+            boardView === 'mountain'
+              ? 'bg-[#E2A4FF] text-[#111111] shadow-[1.5px_1.5px_0_#111111]'
+              : 'bg-[#FFFDF7] hover:bg-[#E2A4FF] text-[#111111]/90 shadow-[0_1.5px_0_#111111] active:translate-y-[1px] active:shadow-none'
+          }`}
+        >
+          {boardView === 'mountain' ? '⛰️ 6RM' : '⛰️ ALL'}
+        </button>
+      )}
+
       <button
         type="button"
-        onClick={onSelectTopRecord}
+        onClick={() => {
+          setBoardView('room');
+          onSelectTopRecord();
+        }}
         aria-pressed={rivalMode === 'top' && !swarmEnabled}
         aria-label="Race #1 Record"
         title="Race #1 Record Ghost"
@@ -314,7 +343,92 @@ export default function LeaderboardDrawer({
         {renderKeyPopover()}
 
         {/* 10 High-Legibility Tactile Runner Rows Stacked Directly Below PICK A SEGMENT */}
-        {!collapsed && (
+        {!collapsed && boardView === 'mountain' && (
+          <div
+            aria-label="6-Room Mountain King Standings"
+            className="flex-1 min-h-0 grid gap-[3.5px]"
+            style={{ gridTemplateRows: 'repeat(10, minmax(0, 1fr))' }}
+          >
+            {mountainSlots.map((entry, idx) => {
+              const rank = idx + 1;
+              if (!entry) {
+                return (
+                  <div
+                    key={`mtn-empty-${rank}`}
+                    className="h-full min-h-0 w-full rounded-xl border-[1.5px] border-dashed border-[#111111]/35 bg-[#FFFDF7]/55 px-2 flex items-center justify-between gap-1.5 text-[10.5px] font-black uppercase text-[#111111]/45"
+                  >
+                    <span className="tabular-nums">#{rank} ---</span>
+                    <span className="tabular-nums">--.--s</span>
+                  </div>
+                );
+              }
+
+              const totalSec = (entry.totalTimeMs / 1000).toFixed(2);
+              const isYou = sanitizeArcadeTag(entry.tag) === cleanPlayerTag;
+
+              return (
+                <button
+                  key={`mtn-${entry.tag}`}
+                  type="button"
+                  onClick={() => setBoardView('room')}
+                  title={`#${rank} @${entry.tag} • ${entry.crowns} Room Crowns • ${entry.roomsCleared}/6 Rooms • ${totalSec}s Total`}
+                  className={`h-full min-h-0 w-full rounded-xl border-2 border-[#111111] px-2 flex items-center justify-between gap-1.5 text-left cursor-pointer select-none focus:outline-none transition-all duration-100 ${
+                    rank === 1
+                      ? 'bg-[#FFE74C] shadow-[2px_2px_0px_#111111]'
+                      : isYou
+                        ? 'bg-[#E7F8EE]'
+                        : 'bg-[#FFFDF7] hover:bg-[#FFF7DC]'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span
+                      className={`${
+                        expandedSolo ? 'w-[25px] h-[25px] text-[11.5px]' : 'w-[21px] h-[20px] text-[10px]'
+                      } rounded-[5px] border border-[#111111] font-black tabular-nums leading-none flex items-center justify-center shrink-0 ${
+                        rank === 1
+                          ? 'bg-[#F5C342]'
+                          : rank === 2
+                            ? 'bg-[#7FD1AE]'
+                            : rank === 3
+                              ? 'bg-[#FFAD87]'
+                              : 'bg-[#EFE6CE]'
+                      }`}
+                    >
+                      {rank}
+                    </span>
+                    <span
+                      className={`${
+                        expandedSolo ? 'text-[12.5px]' : 'text-[11px]'
+                      } font-black uppercase tracking-tight text-[#111111] truncate leading-none`}
+                    >
+                      @{entry.tag}
+                    </span>
+                    {entry.crowns > 0 && (
+                      <span className="bg-[#FFE74C] border border-[#111111] rounded px-1 py-[1px] text-[8.5px] font-black leading-none shrink-0">
+                        👑{entry.crowns}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[9px] font-black uppercase text-[#111111]/65 leading-none">
+                      {entry.roomsCleared}/6
+                    </span>
+                    <span
+                      className={`${
+                        expandedSolo ? 'text-[12px]' : 'text-[10.5px]'
+                      } font-black tabular-nums tracking-tight text-[#111111] leading-none`}
+                    >
+                      {totalSec}s
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {!collapsed && boardView === 'room' && (
           <div
             className="flex-1 min-h-0 grid gap-[3.5px]"
             style={{ gridTemplateRows: 'repeat(10, minmax(0, 1fr))' }}

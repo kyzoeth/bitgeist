@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { formatDailyNumber } from '@/lib/dailySprints';
+import { evaluateRoomMedal, formatDailyNumber } from '@/lib/dailySprints';
 import {
   downloadBlockyBragCardPng,
   encodeStatelessGhostToken,
@@ -333,6 +333,8 @@ export default function VictoryShareModal({
     relayLegTimesMs,
   });
 
+  const medalInfo = evaluateRoomMedal(timeMs, targetGhost?.timeMs ?? 17500);
+
   return (
     <div
       role="dialog"
@@ -380,6 +382,27 @@ export default function VictoryShareModal({
                 {beatTarget
                   ? `${deltaTargetSec.toFixed(2)}s VS @${targetGhost.tag}`
                   : `+${deltaTargetSec.toFixed(2)}s VS @${targetGhost.tag}`}
+              </span>
+            )}
+          </div>
+
+          {/* Stage 12: Trackmania-Style 4-Tier Room Medal & Next-Tier Target Strip */}
+          <div
+            aria-label="Room Medal Tier"
+            className="bg-[#EFE6CE] border-2 border-[#111111] rounded-xl px-3 py-1.5 flex items-center justify-between gap-2 text-[10.5px] font-black uppercase"
+          >
+            <span className="flex items-center gap-1.5">
+              <span className="text-sm leading-none">{medalInfo.emoji}</span>
+              <span>{medalInfo.label}</span>
+            </span>
+            {medalInfo.nextTier && typeof medalInfo.msToNext === 'number' ? (
+              <span className="bg-[#FFFDF7] border border-[#111111] rounded px-2 py-0.5 tabular-nums text-[9.5px] text-[#111111]/85">
+                NEXT {medalInfo.nextEmoji} {medalInfo.nextLabel}: -
+                {(medalInfo.msToNext / 1000).toFixed(2)}s
+              </span>
+            ) : (
+              <span className="bg-[#7FD1AE] border border-[#111111] rounded px-2 py-0.5 text-[9.5px] text-[#111111]">
+                ✨ MAX TIER UNLOCKED
               </span>
             )}
           </div>

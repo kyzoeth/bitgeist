@@ -76,6 +76,14 @@ export interface LivePartyRunner {
   updatedAtMs: number;
 }
 
+export interface LivePartyReaction {
+  id: string;
+  runnerId?: string;
+  tag: string;
+  emoji: string;
+  createdAtMs: number;
+}
+
 export interface LivePartyLobbyState {
   roomCode: string;
   sprintId: string;
@@ -83,6 +91,50 @@ export interface LivePartyLobbyState {
   hostRunnerId: string;
   countdownStartAtMs: number | null;
   runners: LivePartyRunner[];
+  reactions?: LivePartyReaction[];
+  recommendedCourseIndex?: number | null;
+}
+
+export type RoomMedalTier = 'dev' | 'gold' | 'silver' | 'bronze' | 'none';
+
+export interface RoomMedalInfo {
+  tier: RoomMedalTier;
+  emoji: string;
+  label: string;
+  nextTier?: Exclude<RoomMedalTier, 'none'>;
+  nextEmoji?: string;
+  nextLabel?: string;
+  nextTargetMs?: number;
+  msToNext?: number;
+}
+
+export interface MountainStandingEntry {
+  rank: number;
+  tag: string;
+  crowns: number;
+  roomsCleared: number;
+  totalTimeMs: number;
+  bestTimeMs: number;
+}
+
+export type ArcadeMutator = 'none' | 'mirror' | 'turbo';
+
+export interface CustomKeyBindings {
+  left: string;
+  right: string;
+  up: string;
+  down: string;
+  b: string;
+  a: string;
+  retry: string;
+}
+
+export interface PracticePinState {
+  worldX: number;
+  worldY: number;
+  label: string;
+  raceFrame?: number;
+  elapsedMs?: number;
 }
 
 export interface TelemetryFrame {

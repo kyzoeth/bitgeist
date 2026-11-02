@@ -995,6 +995,8 @@ interface TactileKeycapButtonProps {
   label: string;
   badge?: string;
   active?: boolean;
+  rivalActive?: boolean;
+  title?: string;
   className?: string;
   ariaLabel: string;
   onPressChange?: (pressed: boolean) => void;
@@ -1005,6 +1007,8 @@ function TactileKeycapButton({
   label,
   badge,
   active = false,
+  rivalActive = false,
+  title,
   className = '',
   ariaLabel,
   onPressChange,
@@ -1014,6 +1018,7 @@ function TactileKeycapButton({
     <button
       type="button"
       aria-label={ariaLabel}
+      title={title}
       onClick={onClick}
       onPointerDown={
         onPressChange
@@ -1029,7 +1034,9 @@ function TactileKeycapButton({
       className={`h-[29px] rounded-[7px] border-2 border-[#111111] font-black text-[11px] leading-none flex items-center justify-center gap-1.5 select-none cursor-pointer transition-all duration-75 ${
         active
           ? 'bg-[#FFE74C] text-[#111111] translate-y-[1.5px] shadow-[0_1px_0_#111111]'
-          : 'bg-[#FFFDF7] hover:bg-[#FFF8DF] text-[#111111] -translate-y-[0.5px] shadow-[0_3px_0_#111111] active:bg-[#FFE74C] active:translate-y-[1.5px] active:shadow-[0_1px_0_#111111]'
+          : rivalActive
+            ? 'bg-[#E6F9FF] text-[#111111] ring-2 ring-[#4CC9F0] -translate-y-[0.5px] shadow-[0_3px_0_#111111]'
+            : 'bg-[#FFFDF7] hover:bg-[#FFF8DF] text-[#111111] -translate-y-[0.5px] shadow-[0_3px_0_#111111] active:bg-[#FFE74C] active:translate-y-[1.5px] active:shadow-[0_1px_0_#111111]'
       } ${className}`}
     >
       <span>{label}</span>
@@ -1044,27 +1051,36 @@ function TactileKeycapButton({
 
 /**
  * Unified 590px Console Control Deck:
- * Harmonizes the live 144x58 3D Console Controller on the left with 5 height-matched
- * 3D mechanical keycap modules on the right that physically depress and illuminate at 60Hz.
+ * Harmonizes the live 144x58 3D Console Controller on the left with height-matched
+ * 3D mechanical keycap modules on the right that physically depress and illuminate at 60Hz,
+ * plus Stage 11 Rival Input-Diff glow and Stage 14 Practice Save-Pin controls.
  */
 export function ConsoleControlDeck({
   consoleSystem = 'nes',
   visualInputMask,
+  rivalInputMask = 0,
   isCelesteCourse = true,
   gamepadConnected = false,
   gamepadBrand = null,
   gamepadLabel = null,
+  practicePinActive = false,
   onPadInput,
   onRetry,
+  onDropPracticePin,
+  onWarpPracticePin,
 }: {
   consoleSystem?: ConsoleSystemId;
   visualInputMask: number;
+  rivalInputMask?: number;
   isCelesteCourse?: boolean;
   gamepadConnected?: boolean;
   gamepadBrand?: string | null;
   gamepadLabel?: string | null;
+  practicePinActive?: boolean;
   onPadInput?: (button: string, pressed: boolean) => void;
   onRetry?: () => void;
+  onDropPracticePin?: () => void;
+  onWarpPracticePin?: () => void;
 }) {
   const up = (visualInputMask & NES_INPUT_UP) !== 0;
   const left = (visualInputMask & NES_INPUT_LEFT) !== 0;
@@ -1072,10 +1088,16 @@ export function ConsoleControlDeck({
   const bBtn = (visualInputMask & NES_INPUT_B) !== 0;
   const aBtn = (visualInputMask & NES_INPUT_A) !== 0;
 
+  const rivalUp = (rivalInputMask & NES_INPUT_UP) !== 0;
+  const rivalLeft = (rivalInputMask & NES_INPUT_LEFT) !== 0;
+  const rivalRight = (rivalInputMask & NES_INPUT_RIGHT) !== 0;
+  const rivalB = (rivalInputMask & NES_INPUT_B) !== 0;
+  const rivalA = (rivalInputMask & NES_INPUT_A) !== 0;
+
   return (
     <section
       aria-label="Controller and Keyboard Controls Deck"
-      className="hidden sm:flex w-full mt-[12px] bg-[#EFE6CE] border-[3.5px] border-[#111111] rounded-2xl px-3 lg:px-4 py-2 shadow-[inset_0_2px_0_#FFFDF7,inset_0_-4px_0_#D8CEB4,4px_5px_0px_#111111] items-center justify-between gap-2.5 lg:gap-4"
+      className="hidden sm:flex w-full mt-[12px] bg-[#EFE6CE] border-[3.5px] border-[#111111] rounded-2xl px-3 lg:px-4 py-2 shadow-[inset_0_2px_0_#FFFDF7,inset_0_-4px_0_#D8CEB4,4px_5px_0px_#111111] items-center justify-between gap-2.5 lg:gap-3.5"
     >
       {/* Left Dock: Live 60Hz 3D Console Controller */}
       <div className="relative shrink-0">
@@ -1103,7 +1125,7 @@ export function ConsoleControlDeck({
       {/* Recessed Console Deck Seam */}
       <div aria-hidden="true" className="w-[2px] h-11 bg-[#111111]/15 rounded-full shrink-0" />
 
-      {/* Right Zone: 5 Live-Reactive 3D Mechanical Keycap Modules */}
+      {/* Right Zone: Live-Reactive 3D Mechanical Keycap Modules + Practice Pin */}
       <div className="flex-1 min-w-0 flex items-center justify-around gap-1.5 lg:gap-2">
         {/* 1. RUN / MOVE (Left & Right Arrows) */}
         <div className="flex flex-col items-center gap-1.5">
@@ -1111,15 +1133,17 @@ export function ConsoleControlDeck({
             <TactileKeycapButton
               label="←"
               active={left}
+              rivalActive={rivalLeft}
               ariaLabel="Move Left (Left Arrow)"
-              className="w-[29px]"
+              className="w-[28px]"
               onPressChange={onPadInput ? (p) => onPadInput('left', p) : undefined}
             />
             <TactileKeycapButton
               label="→"
               active={right}
+              rivalActive={rivalRight}
               ariaLabel="Move Right (Right Arrow)"
-              className="w-[29px]"
+              className="w-[28px]"
               onPressChange={onPadInput ? (p) => onPadInput('right', p) : undefined}
             />
           </div>
@@ -1133,8 +1157,9 @@ export function ConsoleControlDeck({
           <TactileKeycapButton
             label="↑"
             active={up}
+            rivalActive={rivalUp}
             ariaLabel={isCelesteCourse ? 'Climb Wall (Up Arrow)' : 'D-Pad Up (Up Arrow)'}
-            className="w-[33px]"
+            className="w-[31px]"
             onPressChange={onPadInput ? (p) => onPadInput('up', p) : undefined}
           />
           <span className="text-[10px] font-black uppercase tracking-tight text-[#111111]/85 leading-none">
@@ -1148,8 +1173,9 @@ export function ConsoleControlDeck({
             label="Z"
             badge="B"
             active={bBtn}
+            rivalActive={rivalB}
             ariaLabel={isCelesteCourse ? 'Air-Dash (Z or B Button)' : 'Action B (Z Key)'}
-            className="px-2.5 min-w-[52px]"
+            className="px-2 min-w-[48px]"
             onPressChange={onPadInput ? (p) => onPadInput('b', p) : undefined}
           />
           <span className="text-[10px] font-black uppercase tracking-tight text-[#111111]/85 leading-none">
@@ -1163,8 +1189,9 @@ export function ConsoleControlDeck({
             label="SPACE"
             badge="A"
             active={aBtn}
+            rivalActive={rivalA}
             ariaLabel="Jump (Spacebar or A Button)"
-            className="px-2.5 lg:px-3 min-w-[78px] lg:min-w-[88px]"
+            className="px-2.5 min-w-[72px] lg:min-w-[80px]"
             onPressChange={onPadInput ? (p) => onPadInput('a', p) : undefined}
           />
           <span className="text-[10px] font-black uppercase tracking-tight text-[#111111]/85 leading-none">
@@ -1177,13 +1204,38 @@ export function ConsoleControlDeck({
           <TactileKeycapButton
             label="R"
             ariaLabel="Instant Retry (R Key)"
-            className="w-[33px]"
+            className="w-[31px]"
             onClick={onRetry}
           />
           <span className="text-[10px] font-black uppercase tracking-tight text-[#111111]/85 leading-none">
             RETRY
           </span>
         </div>
+
+        {/* 6. STAGE 14 PRACTICE PIN (P / O Keys) */}
+        {onDropPracticePin && (
+          <div className="flex flex-col items-center gap-1.5">
+            <TactileKeycapButton
+              label={practicePinActive ? '📍O' : 'P'}
+              active={practicePinActive}
+              ariaLabel={
+                practicePinActive
+                  ? 'Warp to Practice Save-Pin (O Key)'
+                  : 'Drop Practice Save-Pin (P Key)'
+              }
+              title={
+                practicePinActive
+                  ? 'Practice Pin Active — Click or press [O] to warp to pin, or [P] to move pin'
+                  : 'Press [P] anywhere mid-room to drop a Practice Save-Pin & [O] to warp back'
+              }
+              className="px-1.5 min-w-[33px]"
+              onClick={practicePinActive && onWarpPracticePin ? onWarpPracticePin : onDropPracticePin}
+            />
+            <span className="text-[10px] font-black uppercase tracking-tight text-[#111111]/85 leading-none">
+              {practicePinActive ? 'WARP' : 'PIN'}
+            </span>
+          </div>
+        )}
       </div>
     </section>
   );

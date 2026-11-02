@@ -104,6 +104,7 @@ import {
 } from '@/lib/romVault';
 import {
   ArcadeIdentityInfo,
+  ArcadeMutator,
   ConsoleSystemId,
   createInitialTrackerState,
   CustomRomSegment,
@@ -111,6 +112,8 @@ import {
   GhostKeyframe,
   GhostRun,
   LivePartyLobbyState,
+  MountainStandingEntry,
+  PracticePinState,
   RaceStatus,
   ReplaySpeed,
   RivalrySeriesSummary,
@@ -496,9 +499,13 @@ export default function BitgeistArena({
   const musicMutedRef = useRef<boolean>(false);
   const [visualInputMask, setVisualInputMask] = useState<number>(0);
   const prevVisualMaskRef = useRef<number>(0);
+  const [rivalInputMask, setRivalInputMask] = useState<number>(0);
+  const prevRivalMaskRef = useRef<number>(0);
+  const targetGhostMasksRef = useRef<Uint8Array | null>(null);
   const [showHowItWorks, setShowHowItWorks] = useState<boolean>(false);
   const showHowItWorksRef = useRef<boolean>(false);
   const [leaderboardRuns, setLeaderboardRuns] = useState<GhostRun[]>([]);
+  const [mountainStandings, setMountainStandings] = useState<MountainStandingEntry[]>([]);
   const [leaderboardTotalRuns, setLeaderboardTotalRuns] = useState<number>(10);
   const [, setServerTopGhost] = useState<GhostRun | null>(initialTargetGhost);
   const serverTopGhostRef = useRef<GhostRun | null>(initialTargetGhost);
@@ -563,6 +570,15 @@ export default function BitgeistArena({
   const [partyLobby, setPartyLobby] = useState<LivePartyLobbyState | null>(null);
   const [partyCodeInput, setPartyCodeInput] = useState<string>('');
   const lastTriggeredLobbyCountdownRef = useRef<number | null>(null);
+  const seenPartyReactionIdsRef = useRef<Set<string>>(new Set());
+
+  // Stage 13: Arcade Mutators (Mirror Mode & 1.25x Turbo Overclock)
+  const [activeMutator, setActiveMutator] = useState<ArcadeMutator>('none');
+  const activeMutatorRef = useRef<ArcadeMutator>('none');
+
+  // Stage 14: Instant Practice Save-Pin ([P] Drop Pin / [O] Warp to Pin)
+  const [practicePin, setPracticePin] = useState<PracticePinState | null>(null);
+  const practicePinBlobRef = useRef<Blob | null>(null);
 
   // Victory Modal State
   const [isVictoryOpen, setIsVictoryOpen] = useState<boolean>(false);
@@ -603,6 +619,9 @@ export default function BitgeistArena({
 
   useEffect(() => {
     targetGhostRef.current = targetGhost;
+    targetGhostMasksRef.current = targetGhost?.inputLog
+      ? expandInputLogToFrameMasks(targetGhost.inputLog)
+      : null;
   }, [targetGhost]);
 
   useEffect(() => {
@@ -721,6 +740,14 @@ export default function BitgeistArena({
       for (const b of heldTouchPadButtonsRef.current) desired.add(b);
       for (const b of heldNativeButtonsRef.current) desired.add(b);
       for (const b of heldGamepadButtonsRef.current) desired.add(b);
+      if (activeMutatorRef.current === 'mirror') {
+        const hasLeft = desired.has('left');
+        const hasRight = desired.has('right');
+        desired.delete('left');
+        desired.delete('right');
+        if (hasLeft) desired.add('right');
+        if (hasRight) desired.add('left');
+      }
     }
 
     const current = heldEffectiveButtonsRef.current;
@@ -1228,11 +1255,15 @@ export default function BitgeistArena({
         const data = (await res.json()) as {
           targetGhost: GhostRun | null;
           leaderboard?: GhostRun[];
+          mountainStandings?: MountainStandingEntry[];
           totalRuns?: number;
           communitySegments?: CustomRomSegment[];
         };
         if (typeof forBootSeq === 'number' && bootSeqRef.current !== forBootSeq) {
           return;
+        }
+        if (Array.isArray(data.mountainStandings)) {
+          setMountainStandings(data.mountainStandings);
         }
 
         if (
@@ -1521,6 +1552,10 @@ export default function BitgeistArena({
       hasExplicitBoundsRef.current = explicitBounds;
 
       const effectiveDareSlug = getEffectiveDareSlugForProfile(profile);
+      if (prevProfile.sprintId !== profile.sprintId) {
+        practicePinBlobRef.current = null;
+        setPracticePin(null);
+      }
       if (prevProfile.sprintId !== profile.sprintId && !effectiveDareSlug) {
         targetGhostRef.current = null;
         setTargetGhost(null);
@@ -3041,6 +3076,120 @@ export default function BitgeistArena({
     }
   }, [partyLobby, selfRunnerId]);
 
+  const handleSendPartyReaction = useCallback(
+    async (emoji: string) => {
+      if (!partyLobby) return;
+      liveStateRef.current.popups.push({
+        id: ++popupSeqRef.current,
+        text: `${emoji} @${playerTagRef.current}`,
+        worldX: liveStateRef.current.playerWorldX,
+        worldY: liveStateRef.current.playerWorldY - 12,
+        bg: '#FFE74C',
+        textColor: '#111111',
+        ttlMs: 850,
+        maxTtlMs: 850,
+      });
+      try {
+        const res = await fetch('/api/lobby', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'react',
+            roomCode: partyLobby.roomCode,
+            runnerId: selfRunnerId,
+            tag: playerTagRef.current,
+            emoji,
+          }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { lobby?: LivePartyLobbyState | null };
+        if (data.lobby) {
+          setPartyLobby(data.lobby);
+        }
+      } catch {
+        // non-fatal
+      }
+    },
+    [partyLobby, selfRunnerId]
+  );
+
+  // Stage 13: Cycle Arcade Mutator (Standard -> Mirror Mode -> 1.25x Turbo)
+  const handleCycleMutator = useCallback(() => {
+    const cur = activeMutatorRef.current;
+    const next: ArcadeMutator =
+      cur === 'none' ? 'mirror' : cur === 'mirror' ? 'turbo' : 'none';
+    activeMutatorRef.current = next;
+    setActiveMutator(next);
+    syncEffectiveVirtualButtons();
+  }, [syncEffectiveVirtualButtons]);
+
+  // Stage 14: Instant Practice Save-Pin ([P] Drop Pin / [O] Warp to Pin)
+  const handleDropPracticePin = useCallback(async () => {
+    const inst = nostalgistRef.current;
+    if (
+      !inst ||
+      respawningRef.current ||
+      liveStateRef.current.raceStatus === 'booting' ||
+      liveStateRef.current.raceStatus === 'error'
+    ) {
+      return;
+    }
+    try {
+      const { state } = await inst.saveState();
+      practicePinBlobRef.current = state;
+      const pin: PracticePinState = {
+        worldX: liveStateRef.current.playerWorldX,
+        worldY: liveStateRef.current.playerWorldY,
+        label: 'PIN [O]',
+        raceFrame: Math.round(liveStateRef.current.raceFrame),
+        elapsedMs: raceElapsedMsRef.current,
+      };
+      setPracticePin(pin);
+      liveStateRef.current.popups.push({
+        id: ++popupSeqRef.current,
+        text: '📍 PIN SET [O]',
+        worldX: pin.worldX,
+        worldY: pin.worldY - 12,
+        bg: '#FF4FD8',
+        textColor: '#111111',
+        ttlMs: 850,
+        maxTtlMs: 850,
+      });
+      playSplitCheckpointSfx(true);
+    } catch {
+      // ignore if core cannot save state right now
+    }
+  }, []);
+
+  const handleWarpPracticePin = useCallback(async () => {
+    const inst = nostalgistRef.current;
+    const blob = practicePinBlobRef.current;
+    if (!inst || !blob || !practicePin || respawningRef.current) return;
+    try {
+      await inst.loadState(blob);
+      const restoreFrame = practicePin.raceFrame ?? 0;
+      const restoreMs = practicePin.elapsedMs ?? 0;
+      liveStateRef.current.playerWorldX = practicePin.worldX;
+      liveStateRef.current.playerWorldY = practicePin.worldY;
+      liveStateRef.current.raceFrame = restoreFrame;
+      emulatedCoreFrameRef.current = restoreFrame;
+      raceElapsedMsRef.current = restoreMs;
+      isAttractModeRef.current = false;
+      setIsAttractMode(false);
+      liveStateRef.current.isAttractReplay = false;
+      liveStateRef.current.isReplayingInputs = false;
+      liveStateRef.current.raceStatus = 'racing';
+      setRaceStatus('racing');
+      resetTickClockRef.current = true;
+      if (inst.getStatus() === 'paused') {
+        inst.resume();
+      }
+      playCountdownTickSfx(1);
+    } catch {
+      // non-fatal
+    }
+  }, [practicePin]);
+
   useEffect(() => {
     if (!partyLobby) return;
     let active = true;
@@ -3071,6 +3220,25 @@ export default function BitgeistArena({
         };
         if (data.lobby) {
           setPartyLobby(data.lobby);
+          if (Array.isArray(data.lobby.reactions)) {
+            for (const rx of data.lobby.reactions) {
+              if (!seenPartyReactionIdsRef.current.has(rx.id)) {
+                seenPartyReactionIdsRef.current.add(rx.id);
+                if (rx.runnerId !== selfRunnerId) {
+                  liveStateRef.current.popups.push({
+                    id: ++popupSeqRef.current,
+                    text: `${rx.emoji} @${rx.tag}`,
+                    worldX: liveStateRef.current.playerWorldX,
+                    worldY: liveStateRef.current.playerWorldY - 14,
+                    bg: '#4CC9F0',
+                    textColor: '#111111',
+                    ttlMs: 850,
+                    maxTtlMs: 850,
+                  });
+                }
+              }
+            }
+          }
           const cdAt = data.lobby.countdownStartAtMs;
           if (
             typeof cdAt === 'number' &&
@@ -3968,6 +4136,20 @@ export default function BitgeistArena({
         setVisualInputMask(nextVisualMask);
       }
 
+      const rivalMasks = targetGhostMasksRef.current;
+      const nextRivalMask =
+        st.raceStatus === 'racing' &&
+        !st.isReplayingInputs &&
+        rivalMasks &&
+        replayIdx >= 0 &&
+        replayIdx < rivalMasks.length
+          ? rivalMasks[replayIdx]
+          : 0;
+      if (nextRivalMask !== prevRivalMaskRef.current) {
+        prevRivalMaskRef.current = nextRivalMask;
+        setRivalInputMask(nextRivalMask);
+      }
+
       rafId = requestAnimationFrame(tick);
     };
 
@@ -4376,6 +4558,26 @@ export default function BitgeistArena({
         return;
       }
 
+      // Stage 14: [P] Drop Practice Save-Pin / [O] Warp to Practice Save-Pin
+      if (
+        (e.code === 'KeyP' || e.code === 'KeyO') &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        segmentCreatorStepRef.current === 'idle'
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!e.repeat) {
+          if (e.code === 'KeyP') {
+            void handleDropPracticePin();
+          } else {
+            void handleWarpPracticePin();
+          }
+        }
+        return;
+      }
+
       if (
         e.code === 'ArrowUp' ||
         e.code === 'ArrowDown' ||
@@ -4514,10 +4716,12 @@ export default function BitgeistArena({
     };
   }, [
     handleCancelSegmentCreator,
+    handleDropPracticePin,
     handleManualRetry,
     handleStepCelesteLevel,
     handleTakeoverFromReplay,
     handleToggleMusicMute,
+    handleWarpPracticePin,
     releaseAllVirtualButtons,
     resetToStartingLine,
     setAltKeyVirtualButton,
@@ -4944,21 +5148,36 @@ export default function BitgeistArena({
                     )}
                   </div>
                   {partyLobby ? (
-                    <div className="flex items-center gap-1 mt-1.5">
-                      <button
-                        type="button"
-                        onClick={() => void handleStartPartyCountdown()}
-                        className="flex-1 bg-[#FFE74C] hover:bg-[#FFD919] text-[#111111] border-[1.5px] border-[#111111] rounded px-1.5 py-1 text-[9.5px] font-black uppercase cursor-pointer"
-                      >
-                        🚦 SYNC 3-2-1 GO
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleLeavePartyLobby()}
-                        className="bg-[#EAE2C8] hover:bg-[#EC6553] hover:text-white text-[#111111] border-[1.5px] border-[#111111] rounded px-1.5 py-1 text-[9.5px] font-black uppercase cursor-pointer"
-                      >
-                        LEAVE
-                      </button>
+                    <div className="space-y-1.5 mt-1.5">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void handleStartPartyCountdown()}
+                          className="flex-1 bg-[#FFE74C] hover:bg-[#FFD919] text-[#111111] border-[1.5px] border-[#111111] rounded px-1.5 py-1 text-[9.5px] font-black uppercase cursor-pointer"
+                        >
+                          🚦 SYNC 3-2-1 GO
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleLeavePartyLobby()}
+                          className="bg-[#EAE2C8] hover:bg-[#EC6553] hover:text-white text-[#111111] border-[1.5px] border-[#111111] rounded px-1.5 py-1 text-[9.5px] font-black uppercase cursor-pointer"
+                        >
+                          LEAVE
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {(['🔥', '⚡', '👑', '💀'] as const).map((em) => (
+                          <button
+                            key={em}
+                            type="button"
+                            onClick={() => void handleSendPartyReaction(em)}
+                            aria-label={`Send ${em} Party Reaction`}
+                            className="bg-[#FFFDF7] hover:bg-[#FFE74C] border border-[#111111] rounded py-0.5 text-[11px] leading-none flex items-center justify-center cursor-pointer"
+                          >
+                            {em}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ) : (
                     <div className="flex items-center gap-1 mt-1.5">
@@ -5064,6 +5283,8 @@ export default function BitgeistArena({
               segmentDraftDistancePx={segmentDraftDistancePx}
               relayModeEnabled={relayModeEnabled}
               relayLegIndex={relayLegIndex}
+              activeMutator={activeMutator}
+              onCycleMutator={handleCycleMutator}
               collapsed={segmentCollapsed}
               onToggleCollapse={() => setSegmentCollapsed((v) => !v)}
               layout="horizontal"
@@ -5081,6 +5302,7 @@ export default function BitgeistArena({
             <LeaderboardDrawer
               stageLabel={activeProfile.stageLabel}
               leaderboard={leaderboardRuns}
+              mountainStandings={mountainStandings}
               totalRuns={leaderboardTotalRuns}
               activeTargetGhost={targetGhost}
               localPbGhost={localPbGhost}
@@ -5226,7 +5448,7 @@ export default function BitgeistArena({
                         height={480}
                         className={`w-full h-full block object-fill ${
                           raceStatus === 'booting' ? 'opacity-0' : 'opacity-100'
-                        }`}
+                        } ${activeMutator === 'mirror' ? 'scale-x-[-1]' : ''}`}
                         style={{ imageRendering: 'pixelated' }}
                       />
 
@@ -5237,6 +5459,7 @@ export default function BitgeistArena({
                         swarmEnabled={swarmEnabled}
                         partyRunners={partyLobby?.runners ?? []}
                         selfRunnerId={selfRunnerId}
+                        practicePin={practicePin}
                         liveStateRef={liveStateRef}
                         overlayCanvasRef={ghostOverlayCanvasRef}
                       />
@@ -5445,6 +5668,8 @@ export default function BitgeistArena({
                   segmentDraftDistancePx={segmentDraftDistancePx}
                   relayModeEnabled={relayModeEnabled}
                   relayLegIndex={relayLegIndex}
+                  activeMutator={activeMutator}
+                  onCycleMutator={handleCycleMutator}
                   collapsed={segmentCollapsed}
                   expandedSolo={!segmentCollapsed && topTenCollapsed}
                   onToggleCollapse={() => setSegmentCollapsed((v) => !v)}
@@ -5463,6 +5688,7 @@ export default function BitgeistArena({
                 <LeaderboardDrawer
                   stageLabel={activeProfile.stageLabel}
                   leaderboard={leaderboardRuns}
+                  mountainStandings={mountainStandings}
                   totalRuns={leaderboardTotalRuns}
                   activeTargetGhost={targetGhost}
                   localPbGhost={localPbGhost}
@@ -5500,6 +5726,7 @@ export default function BitgeistArena({
           <ConsoleControlDeck
             consoleSystem={activeProfile.consoleSystem}
             visualInputMask={visualInputMask}
+            rivalInputMask={rivalInputMask}
             isCelesteCourse={
               activeProfile.romId === DEFAULT_ROM_ID ||
               activeProfile.romId === CELESTE_GBA_ROM_ID
@@ -5507,8 +5734,11 @@ export default function BitgeistArena({
             gamepadConnected={gamepadConnected}
             gamepadBrand={gamepadBrand}
             gamepadLabel={gamepadLabel}
+            practicePinActive={Boolean(practicePin)}
             onPadInput={handleTouchPad}
             onRetry={handleManualRetry}
+            onDropPracticePin={() => void handleDropPracticePin()}
+            onWarpPracticePin={() => void handleWarpPracticePin()}
           />
 
           {/* Mobile Multi-Touch 8-Way Thumb-Slide D-Pad & Dash+Jump Chord Pad (< 640px) */}

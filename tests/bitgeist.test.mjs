@@ -94,6 +94,7 @@ const demoReplaysMod = await import('../lib/celesteDemoReplays.ts');
 const verifierMod = await import('../lib/headlessVerifier.ts');
 const romPatcherMod = await import('../lib/romPatcher.ts');
 const splitTrackerMod = await import('../lib/splitTracker.ts');
+const dailySprintsMod = await import('../lib/dailySprints.ts');
 
 function buildSingleEntryZipBytes(entryName, payloadBytes, useDeflate = false) {
   const nameBytes = Buffer.from(entryName, 'utf8');
@@ -823,5 +824,35 @@ describe('Bitgeist Stages 1-5 Regression Suite', () => {
     assert.equal(list[0].name, 'BOSS RUSH SPLIT');
     assert.equal(list[0].startWorldX, 128);
     assert.equal(list[0].goalWorldX, 1024);
+  });
+
+  it('evaluates Stage 12 4-Tier Room Medals (DEV, GOLD, SILVER, BRONZE) and Mountain King Standings', () => {
+    const devMedal = dailySprintsMod.evaluateRoomMedal(17_200, 17_500);
+    assert.equal(devMedal.tier, 'dev');
+    assert.equal(devMedal.emoji, '💎');
+    assert.equal(devMedal.nextTier, undefined);
+    assert.equal(devMedal.msToNext, undefined);
+
+    const goldMedal = dailySprintsMod.evaluateRoomMedal(18_400, 17_500);
+    assert.equal(goldMedal.tier, 'gold');
+    assert.equal(goldMedal.emoji, '🥇');
+    assert.equal(goldMedal.nextTier, 'dev');
+    assert.equal(goldMedal.msToNext, 900);
+
+    const silverMedal = dailySprintsMod.evaluateRoomMedal(19_800, 17_500);
+    assert.equal(silverMedal.tier, 'silver');
+    assert.equal(silverMedal.emoji, '🥈');
+    assert.equal(silverMedal.nextTier, 'gold');
+
+    const bronzeMedal = dailySprintsMod.evaluateRoomMedal(24_000, 17_500);
+    assert.equal(bronzeMedal.tier, 'bronze');
+    assert.equal(bronzeMedal.emoji, '🥉');
+    assert.equal(bronzeMedal.nextTier, 'silver');
+
+    const standings = ghostStoreMod.getMountainStandings(romProfilesMod.CELESTE_ROM_ID);
+    assert.ok(Array.isArray(standings));
+    assert.ok(standings.length >= 3);
+    assert.ok(standings[0].roomsCleared >= 1);
+    assert.ok(standings[0].totalTimeMs >= 1000);
   });
 });

@@ -1,5 +1,5 @@
 import { type BuiltinCartridgeKey, CELESTE_NES_ROM_ID } from './homebrewCatalog';
-import type { ConsoleSystemId } from './types';
+import type { ConsoleSystemId, RoomMedalInfo } from './types';
 
 interface SprintCourse {
   courseIndex: number;
@@ -316,4 +316,72 @@ export function recordLocalSprintPbMs(sprintId: string, timeMs: number): number 
   } catch {
     return rounded;
   }
+}
+
+/**
+ * Evaluates a Trackmania-style 4-tier speedrun medal (`💎 DEV`, `🥇 GOLD`, `🥈 SILVER`, `🥉 BRONZE`)
+ * relative to a segment's #1 benchmark time (`topBenchmarkMs`).
+ */
+export function evaluateRoomMedal(
+  timeMs: number | null | undefined,
+  topBenchmarkMs: number
+): RoomMedalInfo {
+  const devMs = Math.max(1000, Math.round(topBenchmarkMs));
+  const goldMs = Math.round(devMs * 1.07);
+  const silverMs = Math.round(devMs * 1.18);
+
+  if (typeof timeMs !== 'number' || !Number.isFinite(timeMs) || timeMs < 1000) {
+    return {
+      tier: 'none',
+      emoji: '⚪',
+      label: 'UNRANKED',
+      nextTier: 'bronze',
+      nextEmoji: '🥉',
+      nextLabel: 'BRONZE',
+      nextTargetMs: silverMs,
+    };
+  }
+
+  const rounded = Math.round(timeMs);
+  if (rounded <= devMs) {
+    return {
+      tier: 'dev',
+      emoji: '💎',
+      label: 'DEV MEDAL',
+    };
+  }
+  if (rounded <= goldMs) {
+    return {
+      tier: 'gold',
+      emoji: '🥇',
+      label: 'GOLD MEDAL',
+      nextTier: 'dev',
+      nextEmoji: '💎',
+      nextLabel: 'DEV',
+      nextTargetMs: devMs,
+      msToNext: rounded - devMs,
+    };
+  }
+  if (rounded <= silverMs) {
+    return {
+      tier: 'silver',
+      emoji: '🥈',
+      label: 'SILVER MEDAL',
+      nextTier: 'gold',
+      nextEmoji: '🥇',
+      nextLabel: 'GOLD',
+      nextTargetMs: goldMs,
+      msToNext: rounded - goldMs,
+    };
+  }
+  return {
+    tier: 'bronze',
+    emoji: '🥉',
+    label: 'BRONZE MEDAL',
+    nextTier: 'silver',
+    nextEmoji: '🥈',
+    nextLabel: 'SILVER',
+    nextTargetMs: silverMs,
+    msToNext: rounded - silverMs,
+  };
 }

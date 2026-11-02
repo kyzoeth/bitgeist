@@ -5,13 +5,14 @@ import { CELESTE_CHAMPION_REPLAYS } from '@/lib/celesteDemoReplays';
 import {
   CELESTE_SPRINT_COURSES,
   DailySprintChallenge,
+  evaluateRoomMedal,
   getDailySprintForDate,
   getLocalDailyPbMs,
   getLocalSprintPbMs,
 } from '@/lib/dailySprints';
 import { findBuiltinCartridgeByRomId } from '@/lib/homebrewCatalog';
 import { CELESTE_ROM_ID } from '@/lib/romProfiles';
-import { CustomRomSegment, RomProfile } from '@/lib/types';
+import { ArcadeMutator, CustomRomSegment, RomProfile } from '@/lib/types';
 
 export type SegmentCreatorStep = 'idle' | 'mark-start' | 'mark-finish';
 
@@ -159,6 +160,8 @@ interface SprintLevelCarouselProps {
   relayModeEnabled?: boolean;
   relayLegIndex?: number;
   onToggleRelayMode?: () => void;
+  activeMutator?: ArcadeMutator;
+  onCycleMutator?: () => void;
   onSelectDaily: () => void;
   onSelectCourse: (courseIndex: number) => void;
   onSelectCustomSegment?: (segment: CustomRomSegment | null) => void;
@@ -185,6 +188,8 @@ export default function SprintLevelCarousel({
   relayModeEnabled = false,
   relayLegIndex = 0,
   onToggleRelayMode,
+  activeMutator = 'none',
+  onCycleMutator,
   onSelectDaily,
   onSelectCourse,
   onSelectCustomSegment,
@@ -258,7 +263,8 @@ export default function SprintLevelCarousel({
       }
     }
     const beatTop = pbMs !== null && pbMs <= topMs;
-    return { topMs, pbMs, beatTop };
+    const medal = pbMs !== null ? evaluateRoomMedal(pbMs, topMs) : null;
+    return { topMs, pbMs, beatTop, medal };
   };
 
   const hoveredSlot = hoveredSlotId ? slots.find((s) => s.id === hoveredSlotId) ?? null : null;
@@ -425,6 +431,34 @@ export default function SprintLevelCarousel({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            {onCycleMutator && (
+              <button
+                type="button"
+                onClick={onCycleMutator}
+                aria-pressed={activeMutator !== 'none'}
+                aria-label="Cycle Arcade Mutator (Standard, Mirror, Turbo)"
+                title={
+                  activeMutator === 'mirror'
+                    ? 'Mirror Mode Active (Flipped Screen + Inverted Left/Right) — Click for Turbo'
+                    : activeMutator === 'turbo'
+                      ? 'Turbo Overclock Active (1.25x Emulation Speed) — Click for Standard'
+                      : 'Standard 1x Speed — Click for Mirror or 1.25x Turbo Mutator'
+                }
+                className={`px-1.5 h-[22px] rounded-[5px] border-[1.5px] border-[#111111] font-black text-[8.5px] uppercase leading-none flex items-center justify-center cursor-pointer select-none transition-all duration-75 ${
+                  activeMutator === 'mirror'
+                    ? 'bg-[#7DD3FC] text-[#111111] shadow-[1.5px_1.5px_0_#111111]'
+                    : activeMutator === 'turbo'
+                      ? 'bg-[#FFAD87] text-[#111111] shadow-[1.5px_1.5px_0_#111111]'
+                      : 'bg-[#FFFDF7] hover:bg-[#7DD3FC] text-[#111111]/90 shadow-[0_1.5px_0_#111111] active:translate-y-[1px] active:shadow-none'
+                }`}
+              >
+                {activeMutator === 'mirror'
+                  ? '🪞 MIR'
+                  : activeMutator === 'turbo'
+                    ? '⚡1.25X'
+                    : '1X'}
+              </button>
+            )}
             {isBuiltin && onToggleRelayMode && (
               <button
                 type="button"
@@ -474,7 +508,7 @@ export default function SprintLevelCarousel({
           >
             {slots.map((slot, idx) => {
               const isActive = idx === activeIdx;
-              const { topMs, pbMs, beatTop } = getSlotStats(slot);
+              const { topMs, pbMs, beatTop, medal } = getSlotStats(slot);
 
               return (
                 <div key={slot.id} className="relative h-full min-h-0 w-full group">
@@ -483,7 +517,9 @@ export default function SprintLevelCarousel({
                     aria-current={isActive ? 'true' : undefined}
                     aria-label={`Select ${slot.fullTitle} (#1 Time ${(topMs / 1000).toFixed(2)}s)`}
                     title={`${slot.fullTitle} — #1 Time: ${(topMs / 1000).toFixed(2)}s${
-                      pbMs !== null ? ` • Your PB: ${(pbMs / 1000).toFixed(2)}s` : ''
+                      pbMs !== null && medal
+                        ? ` • Your PB: ${(pbMs / 1000).toFixed(2)}s (${medal.emoji} ${medal.label} MEDAL)`
+                        : ''
                     }`}
                     onMouseEnter={() => setHoveredSlotId(slot.id)}
                     onFocus={() => setHoveredSlotId(slot.id)}
@@ -564,7 +600,8 @@ export default function SprintLevelCarousel({
                               beatTop ? 'text-[#0B5D3B]' : 'text-[#111111]/70'
                             }`}
                           >
-                            {beatTop ? '★' : 'PB'} {(pbMs / 1000).toFixed(2)}s
+                            {medal ? medal.emoji : beatTop ? '★' : 'PB'}{' '}
+                            {(pbMs / 1000).toFixed(2)}s
                           </span>
                         )}
                       </div>

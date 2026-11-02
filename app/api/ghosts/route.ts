@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   DEFAULT_GHOST_PACK_SIZE,
   getGhostsForRom,
+  getMountainStandings,
   getRivalrySeriesSummary,
   getTop10CutoffTimeMs,
   listCommunitySegmentsForRom,
@@ -103,9 +104,11 @@ export async function GET(req: NextRequest) {
     consoleSystem,
   });
   const communitySegments = listCommunitySegmentsForRom(romId);
+  const mountainStandings = getMountainStandings(romId);
   return NextResponse.json({
     ...data,
     communitySegments,
+    mountainStandings,
   });
 }
 

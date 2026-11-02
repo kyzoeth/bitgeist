@@ -17,6 +17,7 @@ import type {
   CustomRomSegment,
   GhostKeyframe,
   GhostRun,
+  MountainStandingEntry,
   RivalrySeriesSummary,
 } from './types';
 
@@ -1249,6 +1250,129 @@ export function listCommunitySegmentsForRom(romId: string): CustomRomSegment[] {
         ? { previewDataUrl: r.preview_data_url }
         : {}),
       createdAt: Number(r.created_at) || Date.now(),
+    }));
+  });
+}
+
+/**
+ * Stage 12: Computes Top-10 Overall Mountain Standings across all segments of `romId`
+ * (combining SQLite PBs with the 10 seeded runners per course so the board is always populated).
+ */
+export function getMountainStandings(romId: string = CELESTE_ROM_ID): MountainStandingEntry[] {
+  const targetRomId = romId || CELESTE_ROM_ID;
+  return withSqliteRetry((db) => {
+    const rows = db
+      .prepare(
+        `SELECT sprint_id, tag, tag_slug, MIN(time_ms) AS pb_ms
+         FROM ghost_runs
+         WHERE rom_id = ? AND died_at_frame IS NULL
+         GROUP BY sprint_id, tag_slug`
+      )
+      .all(targetRomId) as Array<{
+      sprint_id?: string;
+      tag?: string;
+      tag_slug?: string;
+      pb_ms?: number;
+    }>;
+
+    // Map sprintId -> (tagSlug -> { tag, pbMs })
+    const sprintPbs = new Map<string, Map<string, { tag: string; pbMs: number }>>();
+
+    // Pre-populate with seeded Celeste course times so all 6 rooms have full 10-runner baselines
+    if (targetRomId === CELESTE_ROM_ID) {
+      for (let cIdx = 0; cIdx < 6; cIdx++) {
+        const sprintId = cIdx === 0 ? CELESTE_ROM_ID : `${CELESTE_ROM_ID}:c${cIdx}`;
+        const champMs = CELESTE_CHAMPION_REPLAYS[cIdx]?.timeMs ?? 15_000;
+        const map = new Map<string, { tag: string; pbMs: number }>();
+        for (let i = 0; i < SEED_NAMES.length; i++) {
+          const name = SEED_NAMES[i];
+          const slug = tagToSlug(name);
+          const seedMs = Math.round(champMs + i * 515);
+          map.set(slug, { tag: name, pbMs: seedMs });
+        }
+        sprintPbs.set(sprintId, map);
+      }
+    }
+
+    for (const r of rows) {
+      const sprintId = String(r.sprint_id || '');
+      const slug = String(r.tag_slug || '');
+      const tag = sanitizeArcadeTag(String(r.tag || 'RUNNER'));
+      const pbMs = Math.round(Number(r.pb_ms) || 0);
+      if (!sprintId || !slug || pbMs < 1000) continue;
+
+      // Normalize daily Celeste sprintIds onto their underlying course sprintId if applicable
+      let canonicalSprint = sprintId;
+      if (targetRomId === CELESTE_ROM_ID && sprintId.startsWith('daily-')) {
+        const dailyNum = Number(sprintId.replace('daily-', ''));
+        if (Number.isFinite(dailyNum) && dailyNum >= 1) {
+          const d = getDailySprintByNumber(dailyNum);
+          canonicalSprint =
+            d.course.courseIndex === 0
+              ? CELESTE_ROM_ID
+              : `${CELESTE_ROM_ID}:c${d.course.courseIndex}`;
+        }
+      }
+
+      let map = sprintPbs.get(canonicalSprint);
+      if (!map) {
+        map = new Map();
+        sprintPbs.set(canonicalSprint, map);
+      }
+      const existing = map.get(slug);
+      if (!existing || pbMs < existing.pbMs) {
+        map.set(slug, { tag, pbMs });
+      }
+    }
+
+    // Aggregate per-runner crowns, roomsCleared, totalTimeMs, bestTimeMs
+    const runnerTotals = new Map<
+      string,
+      {
+        tag: string;
+        crowns: number;
+        roomsCleared: number;
+        totalTimeMs: number;
+        bestTimeMs: number;
+      }
+    >();
+
+    for (const [, map] of sprintPbs.entries()) {
+      let topMs = Number.POSITIVE_INFINITY;
+      for (const entry of map.values()) {
+        if (entry.pbMs < topMs) topMs = entry.pbMs;
+      }
+      for (const [slug, entry] of map.entries()) {
+        const cur = runnerTotals.get(slug) ?? {
+          tag: entry.tag,
+          crowns: 0,
+          roomsCleared: 0,
+          totalTimeMs: 0,
+          bestTimeMs: Number.POSITIVE_INFINITY,
+        };
+        cur.tag = entry.tag;
+        cur.roomsCleared += 1;
+        cur.totalTimeMs += entry.pbMs;
+        if (entry.pbMs < cur.bestTimeMs) cur.bestTimeMs = entry.pbMs;
+        if (entry.pbMs === topMs) cur.crowns += 1;
+        runnerTotals.set(slug, cur);
+      }
+    }
+
+    const sorted = Array.from(runnerTotals.values()).sort((a, b) => {
+      if (b.roomsCleared !== a.roomsCleared) return b.roomsCleared - a.roomsCleared;
+      if (b.crowns !== a.crowns) return b.crowns - a.crowns;
+      if (a.totalTimeMs !== b.totalTimeMs) return a.totalTimeMs - b.totalTimeMs;
+      return a.bestTimeMs - b.bestTimeMs;
+    });
+
+    return sorted.slice(0, 10).map((item, idx) => ({
+      rank: idx + 1,
+      tag: item.tag,
+      crowns: item.crowns,
+      roomsCleared: item.roomsCleared,
+      totalTimeMs: item.totalTimeMs,
+      bestTimeMs: Number.isFinite(item.bestTimeMs) ? item.bestTimeMs : 0,
     }));
   });
 }
