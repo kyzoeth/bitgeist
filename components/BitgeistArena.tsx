@@ -278,6 +278,79 @@ function setCoreVolumeDb(instance: Nostalgist, db: number) {
   }
 }
 
+interface InternalNostalgistEmulator {
+  gameStatus?: 'paused' | 'running' | 'initial' | 'terminated';
+  pause?: () => void;
+  resume?: () => void;
+  sendCommand?: (msg: string) => void;
+}
+
+/**
+ * Replaces Nostalgist's default `_cmd_toggle_pause()` (`PAUSE_TOGGLE`) in `emulator.pause()` and
+ * `emulator.resume()` with RetroArch's idempotent `_cmd_pause()` (`CMD_EVENT_PAUSE`) and
+ * `_cmd_unpause()` (`CMD_EVENT_UNPAUSE`) exports so rapid transitions can never invert pause state.
+ */
+function patchDeterministicPauseResume(instance: Nostalgist): void {
+  try {
+    const em = (instance as unknown as { getEmulator?: () => InternalNostalgistEmulator }).getEmulator?.();
+    const mod = instance.getEmscriptenModule() as unknown as {
+      _cmd_pause?: () => void;
+      _cmd_unpause?: () => void;
+    };
+    if (!em || !mod) return;
+    em.pause = () => {
+      if (typeof mod._cmd_pause === 'function') {
+        mod._cmd_pause();
+      } else {
+        em.sendCommand?.('PAUSE_TOGGLE');
+      }
+      em.gameStatus = 'paused';
+    };
+    em.resume = () => {
+      if (typeof mod._cmd_unpause === 'function') {
+        mod._cmd_unpause();
+      } else {
+        em.sendCommand?.('PAUSE_TOGGLE');
+      }
+      em.gameStatus = 'running';
+    };
+  } catch {
+    // Non-fatal fallback
+  }
+}
+
+function pauseCore(instance: Nostalgist | null): void {
+  if (!instance) return;
+  try {
+    const mod = instance.getEmscriptenModule() as unknown as { _cmd_pause?: () => void };
+    const em = (instance as unknown as { getEmulator?: () => InternalNostalgistEmulator }).getEmulator?.();
+    if (typeof mod?._cmd_pause === 'function') {
+      mod._cmd_pause();
+      if (em) em.gameStatus = 'paused';
+    } else if (instance.getStatus() === 'running') {
+      instance.pause();
+    }
+  } catch {
+    // Ignore if instance was exited
+  }
+}
+
+function resumeCore(instance: Nostalgist | null): void {
+  if (!instance) return;
+  try {
+    const mod = instance.getEmscriptenModule() as unknown as { _cmd_unpause?: () => void };
+    const em = (instance as unknown as { getEmulator?: () => InternalNostalgistEmulator }).getEmulator?.();
+    if (typeof mod?._cmd_unpause === 'function') {
+      mod._cmd_unpause();
+      if (em) em.gameStatus = 'running';
+    } else if (instance.getStatus() === 'paused') {
+      instance.resume();
+    }
+  } catch {
+    // Ignore if instance was exited
+  }
+}
+
 function storedEntryToBlob(entry: StoredRomEntry): Blob {
   const copy = new Uint8Array(entry.bytes.byteLength);
   copy.set(entry.bytes);
@@ -461,6 +534,7 @@ export default function BitgeistArena({
   const pregameReadyFramesRef = useRef<number>(0);
   const pregameLockingRef = useRef<boolean>(false);
   const hasExplicitBoundsRef = useRef<boolean>(true);
+  const lastRealRamMutationMsRef = useRef<number>(0);
 
   // Real-time Ghost Overtake, Finish Celebration & Floating Popup trackers
   const overtakenGhostIdsRef = useRef<Set<string>>(new Set());
@@ -727,7 +801,7 @@ export default function BitgeistArena({
     setCountdownDisplay(null);
   }, []);
 
-  const syncEffectiveVirtualButtons = useCallback(() => {
+  const syncEffectiveVirtualButtons = useCallback((forceReassert = false) => {
     const instance = nostalgistRef.current;
     const desired = new Set<string>();
     if (liveStateRef.current.isReplayingInputs) {
@@ -764,7 +838,7 @@ export default function BitgeistArena({
       }
     }
     for (const nextBtn of desired) {
-      if (!current.has(nextBtn)) {
+      if (forceReassert || !current.has(nextBtn)) {
         current.add(nextBtn);
         if (instance) {
           try {
@@ -911,13 +985,13 @@ export default function BitgeistArena({
         liveStateRef.current.raceStatus = 'racing';
         setRaceStatus('racing');
         resetTickClockRef.current = true;
-        instance.resume();
+        lastRealRamMutationMsRef.current = performance.now();
+        resumeCore(instance);
+        syncEffectiveVirtualButtons(true);
       };
 
       if (delayMs > 0) {
-        if (instance.getStatus() === 'running') {
-          instance.pause();
-        }
+        pauseCore(instance);
         attractStartTimeoutRef.current = setTimeout(() => {
           attractStartTimeoutRef.current = null;
           if (
@@ -960,9 +1034,7 @@ export default function BitgeistArena({
       setIsAttractMode(false);
       setAttractMeta(null);
 
-      if (instance.getStatus() === 'running') {
-        instance.pause();
-      }
+      pauseCore(instance);
 
       liveStateRef.current.isReplayingInputs = false;
       liveStateRef.current.isAttractReplay = false;
@@ -1091,12 +1163,13 @@ export default function BitgeistArena({
           setCoreVolumeDb(inst, musicMutedRef.current ? -80 : 0);
           liveStateRef.current.raceStatus = 'racing';
           setRaceStatus('racing');
-          syncEffectiveVirtualButtons();
           resetTickClockRef.current = true;
+          lastRealRamMutationMsRef.current = performance.now();
           if (segmentCreatorStepRef.current === 'idle') {
             videoRecorderRef.current.startRecording();
           }
-          inst.resume();
+          resumeCore(inst);
+          syncEffectiveVirtualButtons(true);
           crtTransitionRef.current?.playGoLaunchBurst({ durationMs: 720 });
           playRaceStartSfx();
           gamepadPollerRef.current.pulseRumble('start');
@@ -1362,7 +1435,7 @@ export default function BitgeistArena({
         hasCoreFrameHookRef.current = true;
         const prevPre = mod.preMainLoop;
         const prevPost = mod.postMainLoop;
-        const zpSnap = new Uint8Array(128);
+        const zpSnap = new Uint8Array(256);
         let hasZpSnap = false;
         let lastAdvanceNow = 0;
 
@@ -1371,17 +1444,22 @@ export default function BitgeistArena({
             nostalgistRef.current === inst &&
             !respawningRef.current &&
             inst.getStatus() === 'running' &&
-            liveStateRef.current.raceStatus === 'racing'
+            (liveStateRef.current.raceStatus === 'racing' ||
+              liveStateRef.current.raceStatus === 'pregame')
           ) {
             const ram = getSystemRamView(inst, ramRegionRef.current);
-            if (ram && ram.length >= 128) {
-              zpSnap.set(ram.subarray(0, 128));
+            if (ram && ram.length >= 256) {
+              zpSnap.set(ram.subarray(0, 256));
               hasZpSnap = true;
             } else {
               hasZpSnap = false;
             }
 
-            if (liveStateRef.current.isReplayingInputs && replayFrameMasksRef.current) {
+            if (
+              liveStateRef.current.raceStatus === 'racing' &&
+              liveStateRef.current.isReplayingInputs &&
+              replayFrameMasksRef.current
+            ) {
               const masks = replayFrameMasksRef.current;
               const fIdx = emulatedCoreFrameRef.current;
               const mask = fIdx < masks.length ? masks[fIdx] : 0;
@@ -1408,28 +1486,29 @@ export default function BitgeistArena({
             nostalgistRef.current === inst &&
             !respawningRef.current &&
             inst.getStatus() === 'running' &&
-            liveStateRef.current.raceStatus === 'racing'
+            (liveStateRef.current.raceStatus === 'racing' ||
+              liveStateRef.current.raceStatus === 'pregame')
           ) {
             let advanced = true;
             const nowMs = performance.now();
             if (hasZpSnap) {
               const ram = getSystemRamView(inst, ramRegionRef.current);
-              if (ram && ram.length >= 128) {
+              if (ram && ram.length >= 256) {
                 advanced = false;
-                for (let b = 0; b < 128; b++) {
+                for (let b = 0; b < 256; b++) {
                   if (ram[b] !== zpSnap[b]) {
                     advanced = true;
+                    lastRealRamMutationMsRef.current = nowMs;
                     break;
                   }
-                }
-                if (!advanced && lastAdvanceNow > 0 && nowMs - lastAdvanceNow >= 25) {
-                  advanced = true;
                 }
               }
             } else if (lastAdvanceNow > 0 && nowMs - lastAdvanceNow < 11.5) {
               advanced = false;
+            } else {
+              lastRealRamMutationMsRef.current = nowMs;
             }
-            if (advanced) {
+            if (advanced && liveStateRef.current.raceStatus === 'racing') {
               lastAdvanceNow = nowMs;
               const completedFrame = emulatedCoreFrameRef.current;
               emulatedCoreFrameRef.current = completedFrame + 1;
@@ -1601,8 +1680,10 @@ export default function BitgeistArena({
           liveStateRef.current.attractIsDare = false;
           liveStateRef.current.finishCelebration = null;
 
-          if (existingInstance.getStatus() === 'running') {
-            existingInstance.pause();
+          setCoreVolumeDb(existingInstance, -80);
+          const wasPausedBeforeSwap = existingInstance.getStatus() === 'paused';
+          if (wasPausedBeforeSwap) {
+            resumeCore(existingInstance);
           }
           if (!crtTransitionRef.current?.isCurtainClosed()) {
             await crtTransitionRef.current?.playShutterClose({
@@ -1612,20 +1693,18 @@ export default function BitgeistArena({
             if (isStale()) return;
             await new Promise((r) => setTimeout(r, 180));
             if (isStale()) return;
+          } else if (wasPausedBeforeSwap) {
+            await new Promise((r) => setTimeout(r, 110));
+            if (isStale()) return;
           }
-          setCoreVolumeDb(existingInstance, -80);
+          resumeCore(existingInstance);
           await existingInstance.loadState(cachedStartState);
           if (isStale()) return;
-          if (existingInstance.getStatus() === 'paused') {
-            existingInstance.resume();
-          }
           await new Promise((r) =>
             requestAnimationFrame(() => requestAnimationFrame(() => r(null)))
           );
           if (isStale()) return;
-          existingInstance.pause();
-          await existingInstance.loadState(cachedStartState);
-          if (isStale()) return;
+          pauseCore(existingInstance);
 
           const ram = getSystemRamView(existingInstance, existingRamRegion);
           if (ram || profile.consoleSystem !== 'nes') {
@@ -1772,6 +1851,7 @@ export default function BitgeistArena({
           return;
         }
 
+        patchDeterministicPauseResume(instance);
         nostalgistRef.current = instance;
 
         // Silence cold-boot title skip (or honor user's saved music mute) synchronously via WASM _cmd_set_volume
@@ -1798,14 +1878,7 @@ export default function BitgeistArena({
 
         if (cachedStartState) {
           checkpointBlobRef.current = cachedStartState;
-          if (instance.getStatus() === 'running') {
-            instance.pause();
-            await new Promise((r) => requestAnimationFrame(() => r(null)));
-            if (isStale()) {
-              instance.exit({ removeCanvas: false });
-              return;
-            }
-          }
+          resumeCore(instance);
           await instance.loadState(cachedStartState);
           await new Promise((r) =>
             requestAnimationFrame(() => requestAnimationFrame(() => r(null)))
@@ -1814,6 +1887,7 @@ export default function BitgeistArena({
             instance.exit({ removeCanvas: false });
             return;
           }
+          pauseCore(instance);
           const ram = getSystemRamView(instance, ramRegion);
           if (ram || profile.consoleSystem !== 'nes') {
             const seededTracker = createInitialTrackerState();
@@ -1869,7 +1943,7 @@ export default function BitgeistArena({
         }
 
         // Cold-boot Title / Overworld / Postcard Skipper + Native Room Warp for CelesteNES (and Twin Dragons)
-        instance.resume();
+        resumeCore(instance);
         if (opts.romId === CELESTE_ROM_ID && nesRamOffset !== null) {
           const ramOffset = nesRamOffset;
           instance.sendCommand('FAST_FORWARD');
@@ -2194,7 +2268,7 @@ export default function BitgeistArena({
             // Non-fatal
           }
 
-          instance.pause();
+          pauseCore(instance);
           if (isStale()) {
             instance.exit({ removeCanvas: false });
             return;
@@ -2256,10 +2330,9 @@ export default function BitgeistArena({
           setRaceStatus('pregame');
           setTimerText('INTRO');
           setActiveSegments(0);
-          syncEffectiveVirtualButtons();
-          if (instance.getStatus() === 'paused') {
-            instance.resume();
-          }
+          syncEffectiveVirtualButtons(true);
+          lastRealRamMutationMsRef.current = performance.now();
+          resumeCore(instance);
           crtTransitionRef.current?.playIrisOpen({
             focusX: 128,
             focusY: 120,
@@ -2390,9 +2463,7 @@ export default function BitgeistArena({
         if (nostalgistRef.current !== instance || bootSeqRef.current !== expectedBootSeq) {
           return;
         }
-        if (instance.getStatus() === 'running') {
-          instance.pause();
-        }
+        pauseCore(instance);
         beginPreRaceCountdown({ initialDelayMs: 0, openIris: false });
       } finally {
         pregameLockingRef.current = false;
@@ -2558,14 +2629,17 @@ export default function BitgeistArena({
             setShowHowItWorks(false);
           }
 
-          // Pause outgoing gameplay & release active core joypad lines before closing the curtain
-          if (instance.getStatus() === 'running') {
-            instance.pause();
-          }
+          // Silence outgoing audio, release transient virtual joypad lines, and ensure RetroArch is
+          // running at 60Hz before `loadState` so `_cmd_pause()` / `_cmd_unpause()` never collide inside the 100ms paused timer.
+          setCoreVolumeDb(instance, -80);
           if (!curOpts?.preserveHeldInputs && isReplay) {
             releaseAllVirtualButtons();
           } else {
             releaseTransientVirtualButtons();
+          }
+          const wasPausedBeforeReset = instance.getStatus() === 'paused';
+          if (wasPausedBeforeReset) {
+            resumeCore(instance);
           }
 
           const shouldCloseCurtainFirst =
@@ -2597,6 +2671,9 @@ export default function BitgeistArena({
               await new Promise((r) => setTimeout(r, 200));
               if (isStaleReset()) return;
             }
+          } else if (wasPausedBeforeReset) {
+            await new Promise((r) => setTimeout(r, 110));
+            if (isStaleReset()) return;
           }
 
           // Curtain is now closed (or we were already poised at 00.00s): atomically swap state & HUD
@@ -2665,11 +2742,10 @@ export default function BitgeistArena({
             setRaceStatus('pregame');
             setTimerText('INTRO');
             setActiveSegments(0);
-            syncEffectiveVirtualButtons();
+            syncEffectiveVirtualButtons(true);
             setCoreVolumeDb(instance, musicMutedRef.current ? -80 : 0);
-            if (instance.getStatus() === 'paused') {
-              instance.resume();
-            }
+            lastRealRamMutationMsRef.current = performance.now();
+            resumeCore(instance);
             crtTransitionRef.current?.playIrisOpen({
               focusX: 128,
               focusY: 120,
@@ -2695,21 +2771,17 @@ export default function BitgeistArena({
           setActiveSegments(1);
 
           setCoreVolumeDb(instance, -80);
+          resumeCore(instance);
           await instance.loadState(checkpointBlobRef.current);
           if (isStaleReset()) return;
           if (!curAutoResume) {
-            // Flush restored 00.00s savestate pixels to WebGL behind the closed curtain,
-            // then pause and re-seat exact frame 0 so zero frame drift occurs before GO!.
-            if (instance.getStatus() === 'paused') {
-              instance.resume();
-            }
+            // Flush restored 00.00s savestate pixels to WebGL while running at 60Hz behind the closed curtain,
+            // then issue a single idempotent `_cmd_pause()` so RetroArch freezes cleanly on the starting line.
             await new Promise((r) =>
               requestAnimationFrame(() => requestAnimationFrame(() => r(null)))
             );
             if (isStaleReset()) return;
-            instance.pause();
-            await instance.loadState(checkpointBlobRef.current);
-            if (isStaleReset()) return;
+            pauseCore(instance);
           } else {
             await new Promise((r) => requestAnimationFrame(() => r(null)));
             if (isStaleReset()) return;
@@ -2793,7 +2865,6 @@ export default function BitgeistArena({
             }
             liveStateRef.current.raceStatus = 'racing';
             setRaceStatus('racing');
-            syncEffectiveVirtualButtons();
             setCoreVolumeDb(
               instance,
               (isAttract && !userAudioUnlockedRef.current) || musicMutedRef.current ? -80 : 0
@@ -2803,7 +2874,9 @@ export default function BitgeistArena({
             } else {
               videoRecorderRef.current.discard();
             }
-            instance.resume();
+            lastRealRamMutationMsRef.current = performance.now();
+            resumeCore(instance);
+            syncEffectiveVirtualButtons(true);
             if (!curOpts?.withDeathFlash && !isAttract) {
               playRaceStartSfx();
             }
@@ -2814,9 +2887,7 @@ export default function BitgeistArena({
           } else {
             videoRecorderRef.current.discard();
             clearPendingFinishModal();
-            if (instance.getStatus() === 'running') {
-              instance.pause();
-            }
+            pauseCore(instance);
             liveStateRef.current.raceStatus = 'waiting';
             setRaceStatus('waiting');
             syncEffectiveVirtualButtons();
@@ -2927,10 +2998,11 @@ export default function BitgeistArena({
     replayPausedRef.current = next;
     setReplayPaused(next);
     if (next) {
-      inst.pause();
+      pauseCore(inst);
     } else {
       resetTickClockRef.current = true;
-      inst.resume();
+      lastRealRamMutationMsRef.current = performance.now();
+      resumeCore(inst);
     }
   }, []);
 
@@ -2949,7 +3021,7 @@ export default function BitgeistArena({
     if (!replayPausedRef.current) {
       replayPausedRef.current = true;
       setReplayPaused(true);
-      inst.pause();
+      pauseCore(inst);
     }
     const masks = replayFrameMasksRef.current;
     const nextF = Math.round(liveStateRef.current.raceFrame) + 1;
@@ -2964,10 +3036,10 @@ export default function BitgeistArena({
       }
       syncEffectiveVirtualButtons();
     }
-    inst.resume();
+    resumeCore(inst);
     setTimeout(() => {
       if (nostalgistRef.current === inst && replayPausedRef.current) {
-        inst.pause();
+        pauseCore(inst);
         const curF = Math.round(liveStateRef.current.raceFrame);
         setReplayProgress({
           frame: curF,
@@ -2991,11 +3063,10 @@ export default function BitgeistArena({
     setIsManualReplayActive(false);
     heldReplayButtonsRef.current.clear();
     lastAppliedReplayMaskRef.current = -1;
-    syncEffectiveVirtualButtons();
     resetTickClockRef.current = true;
-    if (inst.getStatus() === 'paused') {
-      inst.resume();
-    }
+    lastRealRamMutationMsRef.current = performance.now();
+    resumeCore(inst);
+    syncEffectiveVirtualButtons(true);
   }, [syncEffectiveVirtualButtons]);
 
   // Stage 10: Live Multi-Runner Party Heat Lobby Coordinator
@@ -3166,6 +3237,7 @@ export default function BitgeistArena({
     const blob = practicePinBlobRef.current;
     if (!inst || !blob || !practicePin || respawningRef.current) return;
     try {
+      resumeCore(inst);
       await inst.loadState(blob);
       const restoreFrame = practicePin.raceFrame ?? 0;
       const restoreMs = practicePin.elapsedMs ?? 0;
@@ -3181,14 +3253,14 @@ export default function BitgeistArena({
       liveStateRef.current.raceStatus = 'racing';
       setRaceStatus('racing');
       resetTickClockRef.current = true;
-      if (inst.getStatus() === 'paused') {
-        inst.resume();
-      }
+      lastRealRamMutationMsRef.current = performance.now();
+      resumeCore(inst);
+      syncEffectiveVirtualButtons(true);
       playCountdownTickSfx(1);
     } catch {
       // non-fatal
     }
-  }, [practicePin]);
+  }, [practicePin, syncEffectiveVirtualButtons]);
 
   useEffect(() => {
     if (!partyLobby) return;
@@ -3494,6 +3566,26 @@ export default function BitgeistArena({
         syncEffectiveVirtualButtons();
       }
 
+      // 1.25. Self-healing WASM Main-Loop Watchdog:
+      // Guarantees the emulator core is never stuck paused during active 'racing' or 'pregame' states.
+      if (
+        instance &&
+        !respawningRef.current &&
+        !replayPausedRef.current &&
+        (typeof document === 'undefined' || !document.hidden) &&
+        (st.raceStatus === 'racing' || st.raceStatus === 'pregame') &&
+        attractLoopTimeoutRef.current === null &&
+        attractStartTimeoutRef.current === null
+      ) {
+        const stalledMs =
+          lastRealRamMutationMsRef.current > 0 ? now - lastRealRamMutationMsRef.current : 0;
+        if (instance.getStatus() === 'paused' || stalledMs > 240) {
+          lastRealRamMutationMsRef.current = now;
+          resumeCore(instance);
+          syncEffectiveVirtualButtons(true);
+        }
+      }
+
       // 1.5. Pre-Game Menu / Loading / Opening Story Auto-Synchronization:
       // Keeps ghosts hidden and timer locked until controllable gameplay begins for 4 consecutive frames.
       if (
@@ -3606,7 +3698,7 @@ export default function BitgeistArena({
             setIsManualReplayActive(false);
             setReplayPaused(false);
             releaseAllVirtualButtons();
-            instance.pause();
+            pauseCore(instance);
             st.raceStatus = 'won';
             setRaceStatus('won');
             setIsVictoryOpen(true);
@@ -3799,7 +3891,7 @@ export default function BitgeistArena({
               heldReplayButtonsRef.current.clear();
               lastAppliedReplayMaskRef.current = 0;
               syncEffectiveVirtualButtons();
-              instance.pause();
+              pauseCore(instance);
               const champMs =
                 activeAttractCandidateRef.current.ghost.timeMs ||
                 Math.max(1000, Math.round(raceElapsedMsRef.current));
@@ -3831,7 +3923,7 @@ export default function BitgeistArena({
             st.raceStatus = 'won';
             setRaceStatus('won');
             releaseAllVirtualButtons();
-            instance.pause();
+            pauseCore(instance);
 
             if (wasReplay) {
               setIsManualReplayActive(false);
@@ -4328,9 +4420,8 @@ export default function BitgeistArena({
     setRaceStatus('racing');
     setTimerText('MARK 1');
     setCoreVolumeDb(instance, musicMutedRef.current ? -80 : 0);
-    if (instance.getStatus() === 'paused') {
-      instance.resume();
-    }
+    lastRealRamMutationMsRef.current = performance.now();
+    resumeCore(instance);
   }, [clearPendingFinishModal, releaseAllVirtualButtons]);
 
   const handleConfirmSegmentStart = useCallback(async () => {
@@ -4353,10 +4444,8 @@ export default function BitgeistArena({
       }
     }
 
-    if (instance.getStatus() === 'paused') {
-      instance.resume();
-      await new Promise((r) => requestAnimationFrame(() => r(null)));
-    }
+    resumeCore(instance);
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
     const previewDataUrl = snapCanvasThumbnailDataUrl(emulatorCanvasRef.current);
     const { state } = await instance.saveState();
 
@@ -4578,7 +4667,13 @@ export default function BitgeistArena({
         return;
       }
 
+      const nativeBit = NATIVE_KEY_MASK_MAP[e.code];
+      const nativeBtn = NATIVE_KEY_BUTTON_MAP[e.code];
+      const altBtn = ALT_KEY_MAP[e.code];
+      const isGameplayKey = Boolean(nativeBtn || altBtn);
+
       if (
+        isGameplayKey ||
         e.code === 'ArrowUp' ||
         e.code === 'ArrowDown' ||
         e.code === 'ArrowLeft' ||
@@ -4587,6 +4682,10 @@ export default function BitgeistArena({
         e.code === 'Backspace'
       ) {
         e.preventDefault();
+        e.stopPropagation();
+        if (target?.tagName === 'BUTTON') {
+          target.blur();
+        }
       }
 
       // During Arcade Attract Mode, pressing ANY gameplay/action key snaps to 00.00s while preserving held input
@@ -4595,16 +4694,13 @@ export default function BitgeistArena({
         if (!isAttractTakeoverKey(e)) {
           return;
         }
-        const nativeBit = NATIVE_KEY_MASK_MAP[e.code];
         if (nativeBit) {
           nativeKeysMaskRef.current |= nativeBit;
           previewKeyMaskRef.current |= nativeBit;
         }
-        const nativeBtn = NATIVE_KEY_BUTTON_MAP[e.code];
         if (nativeBtn) {
           heldNativeButtonsRef.current.add(nativeBtn);
         }
-        const altBtn = ALT_KEY_MAP[e.code];
         if (altBtn) {
           previewKeyMaskRef.current |= BUTTON_NAME_TO_MASK[altBtn] || 0;
           heldAltKeyButtonsRef.current.add(altBtn);
@@ -4625,38 +4721,32 @@ export default function BitgeistArena({
         return;
       }
 
-      const nativeBit = NATIVE_KEY_MASK_MAP[e.code];
       if (nativeBit) {
         nativeKeysMaskRef.current |= nativeBit;
         previewKeyMaskRef.current |= nativeBit;
       }
-      const nativeBtn = NATIVE_KEY_BUTTON_MAP[e.code];
       if (nativeBtn) {
         heldNativeButtonsRef.current.add(nativeBtn);
       }
-      const altBtn = ALT_KEY_MAP[e.code];
       if (altBtn) {
         previewKeyMaskRef.current |= BUTTON_NAME_TO_MASK[altBtn] || 0;
+        heldAltKeyButtonsRef.current.add(altBtn);
       }
 
       // Buffer held keys cleanly during shutter-close / loadState / 3-2-1 countdown without leaking to Emscripten
       if (respawningRef.current || liveStateRef.current.raceStatus === 'countdown') {
         e.stopPropagation();
-        if (altBtn) {
-          heldAltKeyButtonsRef.current.add(altBtn);
-        }
         return;
       }
-
-      if (e.repeat) return;
 
       const instance = nostalgistRef.current;
       if (!instance) return;
 
-      if (liveStateRef.current.raceStatus === 'waiting' && RACE_TRIGGER_CODES.has(e.code)) {
-        if (altBtn) {
-          heldAltKeyButtonsRef.current.add(altBtn);
-        }
+      if (
+        !e.repeat &&
+        liveStateRef.current.raceStatus === 'waiting' &&
+        RACE_TRIGGER_CODES.has(e.code)
+      ) {
         startOrTakeoverLiveRace();
       }
 
@@ -4666,9 +4756,7 @@ export default function BitgeistArena({
         return;
       }
 
-      if (altBtn && (postStatus === 'racing' || postStatus === 'pregame')) {
-        setAltKeyVirtualButton(altBtn, true);
-      } else if (nativeBtn && (postStatus === 'racing' || postStatus === 'pregame')) {
+      if ((altBtn || nativeBtn) && (postStatus === 'racing' || postStatus === 'pregame')) {
         syncEffectiveVirtualButtons();
       }
     };
@@ -4687,8 +4775,10 @@ export default function BitgeistArena({
       const altBtn = ALT_KEY_MAP[e.code];
       if (altBtn) {
         previewKeyMaskRef.current &= ~(BUTTON_NAME_TO_MASK[altBtn] || 0);
-        setAltKeyVirtualButton(altBtn, false);
-      } else if (nativeBtn) {
+        heldAltKeyButtonsRef.current.delete(altBtn);
+      }
+      if (nativeBtn || altBtn) {
+        e.stopPropagation();
         syncEffectiveVirtualButtons();
       }
     };

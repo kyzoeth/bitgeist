@@ -76,9 +76,7 @@ async function pickLiveMutatingCandidate(
 
   const probeLen = Math.min(targetSize, 0x8000);
   const beforeSlices = candidates.map((ptr) => heap.slice(ptr, ptr + probeLen));
-  nostalgist.resume();
   await new Promise((r) => setTimeout(r, 55));
-  nostalgist.pause();
 
   const freshHeap = (nostalgist.getEmscriptenModule() as unknown as { HEAPU8?: Uint8Array }).HEAPU8;
   if (freshHeap) {
@@ -207,31 +205,14 @@ function isFceummStateChunkHeaderBefore(heap: Uint8Array, ptr: number): boolean 
 /**
  * Pinpoints the exact byte offset of fceumm's 2KB NES CPU System RAM (`uint8 RAM[0x800]`)
  * inside `EmscriptenModule.HEAPU8`.
- * Pauses the core BEFORE `_cmd_save_state` so zero frames elapse between snapshot & heap scan,
- * excludes serialized `"RAM\0"` savestate buffers in heap memory, and disambiguates multiple
- * candidates via live frame-step mutation.
+ * Never calls `_cmd_toggle_pause` (`nostalgist.pause()` / `nostalgist.resume()`) so RetroArch's
+ * 60Hz Emscripten main loop cannot desynchronize from `nostalgist.getStatus()`.
+ * Excludes serialized `"RAM\0"` savestate buffers in heap memory, and disambiguates multiple
+ * candidates via live frame mutation.
  */
 async function locateNesSystemRamOffset(nostalgist: Nostalgist): Promise<number | null> {
-  const shouldRestoreRunning = nostalgist.getStatus() === 'running';
   try {
-    const mod = nostalgist.getEmscriptenModule() as unknown as {
-      HEAPU8?: Uint8Array;
-      _cmd_save_state?: () => void;
-    };
-    const canSaveWhilePaused = typeof mod?._cmd_save_state === 'function';
-
-    if (canSaveWhilePaused) {
-      if (nostalgist.getStatus() === 'running') {
-        nostalgist.pause();
-      }
-    } else if (nostalgist.getStatus() === 'paused') {
-      nostalgist.resume();
-    }
-
     const { state } = await nostalgist.saveState();
-    if (nostalgist.getStatus() === 'running') {
-      nostalgist.pause();
-    }
 
     const stateBytes = await unwrapStateBytes(state);
     const ramSnapshot = extractFceummRamFromSaveState(stateBytes);
@@ -244,98 +225,75 @@ async function locateNesSystemRamOffset(nostalgist: Nostalgist): Promise<number 
     const maxOffset = heap.length - 0x800;
     const candidates: number[] = [];
 
-    // Pass 1: Exact frozen 2,048-byte match (excluding `"RAM\0"` serialized savestate buffers in HEAPU8)
-    const a0 = ramSnapshot[0x000];
-    const a1 = ramSnapshot[0x1ff];
-    const a2 = ramSnapshot[0x400];
+    // Collect all candidate 2KB regions in HEAPU8 matching Stack ($0180-$01FF) + Work-RAM ($0300-$07FF)
+    // (excluding volatile Zero-Page $0000-$00FF & OAM $0200-$02FF which mutate while `await saveState()` resolves,
+    // and excluding `"RAM\0"` serialized savestate chunk headers).
+    const workBytes = 0x500 + 0x80; // 1,408 bytes
+    const maxWorkMismatches = Math.floor(workBytes * 0.08);
+    const anchor180 = ramSnapshot[0x180];
+    const anchor1ff = ramSnapshot[0x1ff];
+    const anchor400 = ramSnapshot[0x400];
     for (let ptr = 0; ptr <= maxOffset; ptr += 4) {
       if (
-        heap[ptr] !== a0 ||
-        heap[ptr + 0x1ff] !== a1 ||
-        heap[ptr + 0x400] !== a2 ||
+        heap[ptr + 0x180] !== anchor180 ||
+        heap[ptr + 0x1ff] !== anchor1ff ||
+        heap[ptr + 0x400] !== anchor400 ||
         isFceummStateChunkHeaderBefore(heap, ptr)
       ) {
         continue;
       }
-
       let mismatches = 0;
-      for (let k = 0; k < 0x800; k++) {
-        if (heap[ptr + k] !== ramSnapshot[k]) {
-          mismatches++;
-          if (mismatches > 16) break;
+      for (let k = 0x180; k < 0x200; k++) {
+        if (heap[ptr + k] !== ramSnapshot[k] && ++mismatches > maxWorkMismatches) break;
+      }
+      if (mismatches <= maxWorkMismatches) {
+        for (let k = 0x300; k < 0x800; k++) {
+          if (heap[ptr + k] !== ramSnapshot[k] && ++mismatches > maxWorkMismatches) break;
         }
       }
-      if (mismatches <= 16) {
+      if (mismatches <= maxWorkMismatches) {
         candidates.push(ptr);
         if (candidates.length >= 32) break;
       }
     }
 
-    // Pass 2: Drift-tolerant Work-RAM ($0300-$07FF) + Stack ($0180-$01FF) fallback if core ran during saveState
     if (candidates.length === 0) {
-      const workBytes = 0x500 + 0x80; // 1,408 bytes excluding volatile ZP ($0000-$00FF) & OAM ($0200-$02FF)
-      const maxWorkMismatches = Math.floor(workBytes * 0.1);
-      for (let ptr = 0; ptr <= maxOffset; ptr += 4) {
-        if (isFceummStateChunkHeaderBefore(heap, ptr)) continue;
-        let mismatches = 0;
-        for (let k = 0x180; k < 0x200; k++) {
-          if (heap[ptr + k] !== ramSnapshot[k] && ++mismatches > maxWorkMismatches) break;
-        }
-        if (mismatches <= maxWorkMismatches) {
-          for (let k = 0x300; k < 0x800; k++) {
-            if (heap[ptr + k] !== ramSnapshot[k] && ++mismatches > maxWorkMismatches) break;
+      return null;
+    }
+
+    // Disambiguate true live CPU RAM from static savestate/scratch buffers in HEAPU8 by observing
+    // ~3 live frames (48ms) WITHOUT calling saveState(), pause(), or resume().
+    const beforeSlices = candidates.map((ptr) => heap.slice(ptr, ptr + 0x300));
+    await new Promise((r) => setTimeout(r, 48));
+
+    const freshHeap = (nostalgist.getEmscriptenModule() as unknown as { HEAPU8?: Uint8Array })
+      ?.HEAPU8;
+    if (freshHeap) {
+      let bestPtr: number | null = null;
+      let bestDiffs = 0;
+      for (let idx = 0; idx < candidates.length; idx++) {
+        const ptr = candidates[idx];
+        const prev = beforeSlices[idx];
+        let diffs = 0;
+        for (let b = 0; b < 0x300; b++) {
+          if (freshHeap[ptr + b] !== prev[b]) {
+            diffs++;
           }
         }
-        if (mismatches <= maxWorkMismatches) {
-          candidates.push(ptr);
-          if (candidates.length >= 32) break;
+        if (diffs > bestDiffs) {
+          bestDiffs = diffs;
+          bestPtr = ptr;
         }
+      }
+      if (bestPtr !== null) {
+        return bestPtr;
       }
     }
 
-    if (candidates.length === 1) {
-      return candidates[0];
-    }
-
-    if (candidates.length > 1) {
-      // Step ~3 frames WITHOUT calling saveState() so only true live CPU RAM mutates
-      const beforeSlices = candidates.map((ptr) => heap.slice(ptr, ptr + 0x300));
-      nostalgist.resume();
-      await new Promise((r) => setTimeout(r, 48));
-      nostalgist.pause();
-
-      const freshHeap = (nostalgist.getEmscriptenModule() as unknown as { HEAPU8?: Uint8Array })
-        ?.HEAPU8;
-      if (freshHeap) {
-        for (let idx = 0; idx < candidates.length; idx++) {
-          const ptr = candidates[idx];
-          const prev = beforeSlices[idx];
-          for (let b = 0; b < 0x300; b++) {
-            if (freshHeap[ptr + b] !== prev[b]) {
-              return ptr;
-            }
-          }
-        }
-      }
-
-      return candidates[0];
-    }
-
-    return null;
+    return candidates[0];
   } catch (err) {
     console.warn('[Bitgeist] RAM offset locator warning:', err);
     return null;
-  } finally {
-    try {
-      const current = nostalgist.getStatus();
-      if (shouldRestoreRunning && current === 'paused') {
-        nostalgist.resume();
-      } else if (!shouldRestoreRunning && current === 'running') {
-        nostalgist.pause();
-      }
-    } catch {
-      // Instance may have been exited concurrently during abort
-    }
   }
 }
 
@@ -352,14 +310,8 @@ export async function locateSystemRamRegion(
   }
 
   const expectedSize = EXPECTED_RAM_BYTES[consoleSystem] || 0x2000;
-  const shouldRestoreRunning = nostalgist.getStatus() === 'running';
   try {
-    if (nostalgist.getStatus() === 'paused') {
-      nostalgist.resume();
-    }
-
     const { state } = await nostalgist.saveState();
-    nostalgist.pause();
 
     const stateBytes = await unwrapStateBytes(state);
     const mod = nostalgist.getEmscriptenModule() as unknown as { HEAPU8?: Uint8Array };
@@ -397,17 +349,6 @@ export async function locateSystemRamRegion(
   } catch (err) {
     console.warn(`[Bitgeist] ${consoleSystem} WRAM locator warning:`, err);
     return null;
-  } finally {
-    try {
-      const current = nostalgist.getStatus();
-      if (shouldRestoreRunning && current === 'paused') {
-        nostalgist.resume();
-      } else if (!shouldRestoreRunning && current === 'running') {
-        nostalgist.pause();
-      }
-    } catch {
-      // Instance may have been exited concurrently during abort
-    }
   }
 }
 
