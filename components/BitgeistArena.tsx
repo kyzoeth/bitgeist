@@ -1265,6 +1265,7 @@ export default function BitgeistArena({
   );
 
   const handleSelectTopRecord = useCallback(() => {
+    setSwarmEnabled(false);
     rivalModeRef.current = 'top';
     setRivalMode('top');
     const top = serverTopGhostRef.current;
@@ -1273,6 +1274,11 @@ export default function BitgeistArena({
   }, []);
 
   const handleSelectMyPb = useCallback(() => {
+    setSwarmEnabled(false);
+    if (rivalModeRef.current === 'pb') {
+      handleSelectTopRecord();
+      return;
+    }
     const pb = getLocalPbGhost(profileRef.current.sprintId);
     if (!pb) return;
     setLocalPbGhost(pb);
@@ -1280,14 +1286,22 @@ export default function BitgeistArena({
     setRivalMode('pb');
     targetGhostRef.current = pb;
     setTargetGhost(pb);
-  }, []);
+  }, [handleSelectTopRecord]);
 
-  const handleSelectCustomRival = useCallback((ghost: GhostRun) => {
-    rivalModeRef.current = 'custom';
-    setRivalMode('custom');
-    targetGhostRef.current = ghost;
-    setTargetGhost(ghost);
-  }, []);
+  const handleSelectCustomRival = useCallback(
+    (ghost: GhostRun) => {
+      setSwarmEnabled(false);
+      if (rivalModeRef.current === 'custom' && targetGhostRef.current?.id === ghost.id) {
+        handleSelectTopRecord();
+        return;
+      }
+      rivalModeRef.current = 'custom';
+      setRivalMode('custom');
+      targetGhostRef.current = ghost;
+      setTargetGhost(ghost);
+    },
+    [handleSelectTopRecord]
+  );
 
   const getEffectiveDareSlugForProfile = useCallback(
     (profile: RomProfile): string | undefined => {

@@ -90,10 +90,11 @@ export function buildCartridgeCarouselSlots(
     return buildCelesteCarouselSlots(todayDaily);
   }
 
-  // Custom BYO Vault ROM: render user-created segments (or default base sprint if none saved yet)
+  // Custom BYO Vault ROM: render up to 5 most recent user/community segments (so + NEW SEGMENT always fits in the 6-slot rack)
   if (customSegments.length > 0) {
     const customBadges = ['#7FD1AE', '#FFE74C', '#7DD3FC', '#E2A4FF', '#FFAD87'];
-    return customSegments.map((seg, idx) => ({
+    const visibleSegments = customSegments.slice(-5);
+    return visibleSegments.map((seg, idx) => ({
       id: seg.id,
       kind: 'custom',
       sprintId: seg.sprintId,
@@ -299,10 +300,7 @@ export default function SprintLevelCarousel({
     }
   };
 
-  const showCreatorSlot =
-    !isBuiltin &&
-    Boolean(onStartSegmentCreator) &&
-    (customSegments.length < 5 || segmentCreatorStep !== 'idle');
+  const showCreatorSlot = !isBuiltin && Boolean(onStartSegmentCreator);
   const totalVerticalRows = Math.max(1, slots.length + (showCreatorSlot ? 1 : 0));
 
   const renderCreatorCardVertical = () => {
